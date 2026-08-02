@@ -1,0 +1,42 @@
+# macOS and editor metadata
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+
+# Python caches and local environments
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.venv*/
+
+# Notebook runtime state
+.ipynb_checkpoints/
+
+# Experiment-development scratch files and superseded implementations
+/beta_vae_experiments/analysis.ipynb
+/beta_vae_experiments/archive/
+/beta_vae_experiments/optional/
+/beta_vae_experiments/tests/
+/beta_vae_experiments/research.txt
+/beta_vae_experiments/research_new.txt
+/beta_vae_experiments/metrics/*.txt
+/beta_vae_experiments/todo.txt
+/beta_vae_experiments/work_load.txt
+
+# Local datasets and generated experiment artifacts
+/data/
+/Real_Data_*/
+/beta_vae_experiments/outputs/
+*.pt
+*.pth
+*.ckpt
+
+# Runtime logs and temporary files
+*.log
+*.tmp
