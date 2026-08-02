@@ -28,9 +28,11 @@ htmlcov/
 /beta_vae_experiments/metrics/*.txt
 /beta_vae_experiments/todo.txt
 /beta_vae_experiments/work_load.txt
+/beta_vae_experiments/resumable_trainer.py
+/beta_vae_experiments/metrics/beta_analysis.py
 
 # Local datasets and generated experiment artifacts
-/data/
+/data
 /Real_Data_*/
 /beta_vae_experiments/outputs/
 *.pt

@@ -132,9 +132,6 @@ try:
         AbsoluteCoreMetricConfig,
         run_absolute_core_metrics_pipeline,
     )
-    from beta_vae_experiments.metrics.beta_analysis import (
-        save_single_seed_beta_analysis,
-    )
     from beta_vae_experiments.metrics.downstream import (
         save_random_forest_cv_evaluation,
     )
@@ -143,7 +140,6 @@ try:
     )
     from beta_vae_experiments.metrics.visualizations import save_varix_result_plots
     from beta_vae_experiments.references import save_research_references
-    from beta_vae_experiments.resumable_trainer import ResumableExperimentTrainer
 except ModuleNotFoundError:
     from data_pipeline import (  # type: ignore[no-redef]
         build_core_metric_inputs,
@@ -155,9 +151,6 @@ except ModuleNotFoundError:
         AbsoluteCoreMetricConfig,
         run_absolute_core_metrics_pipeline,
     )
-    from metrics.beta_analysis import (
-        save_single_seed_beta_analysis,  # type: ignore[no-redef]
-    )
     from metrics.downstream import (  # type: ignore[no-redef]
         save_random_forest_cv_evaluation,
     )
@@ -168,13 +161,12 @@ except ModuleNotFoundError:
         save_varix_result_plots,
     )
     from references import save_research_references  # type: ignore[no-redef]
-    from resumable_trainer import ResumableExperimentTrainer  # type: ignore[no-redef]
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EXPERIMENT_SCHEMA_ID = "varix_fixed_beta_d8_absolute_core_metrics_v4_mps"
-OUTPUT_DIR = PROJECT_ROOT / "Real_Data_Latent_d8_FixedBeta_AbsoluteCoreMetrics_v4_MPS"
-FULL_METRICS_STEM = "fixed_beta_run_metrics_absolute_core_v4_mps"
+EXPERIMENT_SCHEMA_ID = "varix_fixed_beta_d8_absolute_core_metrics_v4_cuda"
+OUTPUT_DIR = PROJECT_ROOT / "Real_Data_Latent_d8_FixedBeta_AbsoluteCoreMetrics_v4_CUDA"
+FULL_METRICS_STEM = "fixed_beta_run_metrics_absolute_core_v4_cuda"
 
 DATA_SPLIT_SEED = 2
 TRAINING_SEEDS = [2]
@@ -219,6 +211,18 @@ BASE_EXPERIMENTS = [
     {"learning_rate": 0.0005, "default_vae_loss": "kl"},
     {"learning_rate": 0.0005, "default_vae_loss": "mmd"},
 ]
+
+# Variable inputs that uniquely identify a planned training run. Fixed
+# scientific settings are versioned through EXPERIMENT_SCHEMA_ID.
+RUN_IDENTITY_COLUMNS = (
+    "default_vae_loss",
+    "learning_rate",
+    "beta",
+    "seed",
+    "epochs",
+    "loss_reduction",
+)
+RUN_IDENTITY_NORMALIZERS = (str, float, float, int, int, str)
 
 
 def enforce_deterministic_pairing_splits() -> None:
@@ -265,6 +269,21 @@ def release_accelerator_memory() -> None:
         torch.mps.empty_cache()
 
 
+def validate_device(device: str) -> None:
+    """Refuse to start an expensive CUDA grid unless an NVIDIA GPU is usable."""
+    if device != "cuda":
+        return
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is unavailable. Install a CUDA-enabled PyTorch build and "
+            "verify the NVIDIA driver before starting training."
+        )
+    print(
+        f"CUDA ready: {torch.cuda.get_device_name(0)} "
+        f"(PyTorch CUDA {torch.version.cuda}, {torch.cuda.device_count()} GPU(s))"
+    )
+
+
 def _token(value: Any) -> str:
     token = str(value).strip().lower().replace(".", "p")
     return re.sub(r"[^a-z0-9_-]+", "-", token).strip("-")
@@ -284,9 +303,37 @@ def run_name_from_parameters(parameters: dict[str, Any]) -> str:
     )
 
 
+def run_parameter_tuple(parameters: dict[str, Any]) -> tuple[Any, ...]:
+    """Return the normalized composite key for one training configuration."""
+    return tuple(
+        normalize(parameters[column])
+        for column, normalize in zip(
+            RUN_IDENTITY_COLUMNS,
+            RUN_IDENTITY_NORMALIZERS,
+            strict=True,
+        )
+    )
+
+
+def passed_parameter_tuples(rows: Sequence[dict[str, Any]]) -> set[tuple[Any, ...]]:
+    """Index successful rows by tuple; failed rows remain retryable."""
+    passed: set[tuple[Any, ...]] = set()
+    for row in rows:
+        if str(row.get("status")) != "ok":
+            continue
+        if str(row.get("experiment_schema_id")) != EXPERIMENT_SCHEMA_ID:
+            continue
+        try:
+            passed.add(run_parameter_tuple(row))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return passed
+
+
 def build_experiment_grid(
     epochs: int = MAX_EPOCHS,
     loss_reduction: str = "sum",
+    device: str = "cuda",
 ) -> list[dict[str, Any]]:
     if epochs <= 0:
         raise ValueError("epochs must be positive")
@@ -299,6 +346,7 @@ def build_experiment_grid(
             "beta": float(beta),
             "epochs": int(epochs),
             "loss_reduction": loss_reduction,
+            "device": device,
         }
         for base in BASE_EXPERIMENTS
         for seed in TRAINING_SEEDS
@@ -309,6 +357,7 @@ def build_experiment_grid(
 def build_smoke_test_experiment(
     epochs: int,
     loss_reduction: str = "sum",
+    device: str = "cuda",
 ) -> dict[str, Any]:
     if loss_reduction not in {"sum", "mean"}:
         raise ValueError("loss_reduction must be 'sum' or 'mean'")
@@ -318,6 +367,7 @@ def build_smoke_test_experiment(
         "beta": float(BETAS[0]),
         "epochs": int(epochs),
         "loss_reduction": loss_reduction,
+        "device": device,
     }
 
 
@@ -338,8 +388,8 @@ def build_varix_config(parameters: dict[str, Any]) -> VarixConfig:
         skip_preprocessing=False,
         global_seed=DATA_SPLIT_SEED,
         reproducible=True,
-        device="mps",
-        n_gpus=1,
+        device=str(parameters["device"]),
+        n_gpus=1 if parameters["device"] == "cuda" else 0,
         float_precision="32",
         compile_model=False,
         learning_rate=float(parameters["learning_rate"]),
@@ -450,28 +500,18 @@ def save_overview(rows: list[dict[str, Any]], output_dir: Path) -> pd.DataFrame:
         frame.to_parquet(output_dir / f"{FULL_METRICS_STEM}.parquet", index=False)
     except (ImportError, ModuleNotFoundError) as exc:
         warnings.warn(f"Could not write Parquet overview: {exc}")
+    analysis_frame = frame
+    if "status" in analysis_frame.columns:
+        analysis_frame = analysis_frame.loc[analysis_frame["status"] == "ok"]
     rate_distortion_columns = {
         "recon_test_mse",
         "posterior_conditional_kl_total_mean",
     }
-    if rate_distortion_columns.issubset(frame.columns):
-        save_rate_distortion_analysis(frame, output_dir)
-    beta_analysis_columns = {
-        "beta",
-        "loss_reduction",
-        "default_vae_loss",
-        "input_dimension",
-        "latent_dimension",
-        "recon_test_mse",
-        "posterior_conditional_kl_total_mean",
-        "info_mutual_information_nats",
-        "info_total_correlation_beta_tcvae_mixture_nats",
-        "info_dimension_wise_kl_nats",
-        "info_decomposition_rate_reference_nats",
-        "posterior_collapsed_dimensions_fraction",
-    }
-    if beta_analysis_columns.issubset(frame.columns):
-        save_single_seed_beta_analysis(frame, output_dir)
+    rate_distortion_frame = analysis_frame.dropna(
+        subset=list(rate_distortion_columns)
+    ) if rate_distortion_columns.issubset(analysis_frame.columns) else pd.DataFrame()
+    if not rate_distortion_frame.empty:
+        save_rate_distortion_analysis(rate_distortion_frame, output_dir)
     return frame
 
 
@@ -479,6 +519,7 @@ def run_experiment_grid(
     experiments: Sequence[dict[str, Any]],
     output_dir: Path,
     resume_existing: bool = True,
+    rerun_passed: bool = False,
 ) -> pd.DataFrame:
     save_research_references(output_dir)
     overview_path = output_dir / f"{FULL_METRICS_STEM}.csv"
@@ -488,29 +529,23 @@ def run_experiment_grid(
         for row in rows:
             if pd.isna(row.get("loss_reduction")):
                 row["loss_reduction"] = "sum"
-    completed = set()
-    for row in rows:
-        run_name = str(row["run_name"])
-        ridgeline_dir = output_dir / "plots" / run_name
-        downstream_dir = output_dir / "downstream" / run_name
-        dimensionwise_ridges = list(
-            ridgeline_dir.glob("Ridgeline_CANCER_TYPE_ACRONYM_LatDim_*.png")
-        )
-        random_forest_evaluation = (
-            downstream_dir / "random_forest_cv5_accuracy_evaluation.csv"
-        )
-        if (
-            str(row.get("status")) == "ok"
-            and str(row.get("experiment_schema_id")) == EXPERIMENT_SCHEMA_ID
-            and len(dimensionwise_ridges) == LATENT_DIM
-            and random_forest_evaluation.exists()
-        ):
-            completed.add(run_name)
-    for parameters in experiments:
+    planned = {run_parameter_tuple(parameters) for parameters in experiments}
+    passed = passed_parameter_tuples(rows) if not rerun_passed else set()
+    remaining = planned - passed
+    runs_to_execute = [
+        parameters
+        for parameters in experiments
+        if run_parameter_tuple(parameters) in remaining
+    ]
+    print(
+        "Tuple comparison: "
+        f"dataframe_rows={len(rows)}, "
+        f"planned={len(planned)}, "
+        f"passed={len(planned & passed)}, "
+        f"remaining={len(remaining)}."
+    )
+    for parameters in runs_to_execute:
         run_name = run_name_from_parameters(parameters)
-        if run_name in completed:
-            print(f"[SKIP] {run_name}")
-            continue
         started_at = datetime.now(UTC)
         started_at_utc = started_at.isoformat(timespec="seconds")
         start_clock = perf_counter()
@@ -519,12 +554,7 @@ def run_experiment_grid(
             set_training_seed(int(parameters["seed"]))
             config = build_varix_config(parameters)
             save_run_config(run_name, parameters, config, output_dir)
-            ResumableExperimentTrainer.configure_checkpoint(
-                output_dir / "training_checkpoints" / f"{run_name}.pt",
-                run_name,
-            )
             varix = acx.Varix(config=config)
-            varix._trainer_type = ResumableExperimentTrainer
             result = varix.run()
             row = analyze_run(varix, result, run_name, parameters, output_dir)
             try:
@@ -601,7 +631,21 @@ def parse_command_line() -> argparse.Namespace:
         help="PyTorch reduction for reconstruction and variational losses.",
     )
     parser.add_argument("--skip-smoke-test", action="store_true")
+    parser.add_argument(
+        "--device",
+        choices=("cuda", "mps", "cpu"),
+        default="cuda",
+        help="Training accelerator (use 'cuda' for an NVIDIA GPU).",
+    )
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument(
+        "--rerun-passed",
+        action="store_true",
+        help=(
+            "Train configurations again even when their complete parameter "
+            "tuple already has status 'ok'. Failed runs remain retryable."
+        ),
+    )
     args = parser.parse_args()
     if args.epochs <= 0 or args.smoke_test_epochs <= 0:
         parser.error("epoch counts must be positive")
@@ -618,10 +662,12 @@ def confirm_full_training(n_runs: int, epochs: int) -> bool:
 
 def main() -> None:
     cli = parse_command_line()
+    validate_device(cli.device)
     if not cli.skip_smoke_test:
         smoke = build_smoke_test_experiment(
             cli.smoke_test_epochs,
             loss_reduction=cli.loss_reduction,
+            device=cli.device,
         )
         smoke_dir = OUTPUT_DIR / "smoke_test" / f"epochs_{cli.smoke_test_epochs}"
         overview = run_experiment_grid([smoke], smoke_dir, resume_existing=False)
@@ -630,9 +676,14 @@ def main() -> None:
     experiments = build_experiment_grid(
         cli.epochs,
         loss_reduction=cli.loss_reduction,
+        device=cli.device,
     )
     if cli.yes or confirm_full_training(len(experiments), cli.epochs):
-        overview = run_experiment_grid(experiments, OUTPUT_DIR / f"epochs_{cli.epochs}")
+        overview = run_experiment_grid(
+            experiments,
+            OUTPUT_DIR / f"epochs_{cli.epochs}",
+            rerun_passed=cli.rerun_passed,
+        )
         print(overview.head())
 
 

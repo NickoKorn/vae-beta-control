@@ -125,20 +125,6 @@ that an exactly zero residual is not expected.
 Reference: Chen, R. T. Q., Li, X., Grosse, R. B., and Duvenaud, D. K. (2018),
 “Isolating Sources of Disentanglement in Variational Autoencoders,” NeurIPS 31.
 
-## Practical non-degradation
-
-Degradation is oriented so positive values are worse. For preregistered margin
-`Δ_m`, endpoint `m` passes only if
-
-```text
-UCB(degradation_m(β)) < Δ_m.
-```
-
-Strict, main, and liberal profiles are supported, but the code never invents
-numerical margins. Only a supplied `main` profile determines the primary
-conclusion. With one seed, the UCB is not estimable and the decision remains
-unresolved.
-
 ## Distortion–rate diagnostic
 
 For ideal global minimizers and `β₁ < β₂`:
@@ -159,24 +145,6 @@ The diagnostic uses objective-compatible D, R, and effective β. Violations are
 reported unchanged as ideal-global-optimum consistency diagnostics, not as
 automatic model failures or estimates of a true optimal β.
 
-## Result tables
-
-```text
-fixed_beta_analysis/
-├── metric_results.csv
-├── beta_summary.csv
-├── primary_endpoint_decision.csv
-├── beta_selection_summary.csv
-├── collapse_transition.csv
-├── information_decomposition.csv
-└── mathematical_beta_diagnostics.csv
-```
-
-Tables are deterministically sorted and retain experiment family, run, nominal
-and effective β, training seed, split, metric family, metric role, value, and
-status where applicable. Unavailable single-seed inference remains explicitly
-unavailable rather than becoming a zero-width interval.
-
 ## Installation and execution
 
 Use Python 3.11 and install the pinned dependencies:
@@ -188,12 +156,23 @@ python -m pip install -r beta_vae_experiments/requirements.txt
 Run from the repository root:
 
 ```shell
+export CUBLAS_WORKSPACE_CONFIG=:16:8
 python beta_vae_experiments/beta_varix_experiments.py \
   --skip-smoke-test \
   --epochs 50 \
   --loss-reduction sum \
+  --device cuda \
   --yes
 ```
+
+Training requires a CUDA-enabled PyTorch build and an available NVIDIA GPU.
+The launcher `beta_vae_experiments/run_full_sum_cuda.sh` sets the deterministic
+cuBLAS workspace configuration before Python starts.
+
+By default, the existing results table is indexed by the complete six-value
+training tuple (loss, learning rate, beta, seed, epochs, and reduction).
+Configurations recorded with status `ok` are skipped; failed and new tuples are
+trained. Pass `--rerun-passed` to train successful tuples again.
 
 The AUTOENCODIX commit in `requirements.txt` is part of the scientific
 provenance. Any upgrade requires a new loss audit and complete local test run.
