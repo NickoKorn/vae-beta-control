@@ -158,7 +158,11 @@ def validate_or_create_split_manifest(
         split: sorted(str(value) for value in splits[split]["sample_ids"])
         for split in ("train", "valid", "test")
     }
-    combined = [value for values in current.values() for value in values]
+    combined = [
+        sample_id
+        for split_sample_ids in current.values()
+        for sample_id in split_sample_ids
+    ]
     if len(combined) != len(set(combined)):
         raise ValueError("A sample occurs in more than one split")
     manifest = {
