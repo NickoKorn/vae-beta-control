@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "dataset": {
+    "options": {
+      "n_samples": 240,
+      "dataset_seed": 42,
+      "split_seed": 42,
+      "radius": 1.0
+    },
+    "id": "circle",
+    "split_seed": 42
+  },
+  "training": {
+    "learning_rates": [
+      0.0005
+    ],
+    "losses": [
+      "kl"
+    ],
+    "loss_reductions": [
+      "mean"
+    ],
+    "device": "cpu",
+    "betas": [
+      0.0075
+    ],
+    "latent_dims": [
+      2
+    ],
+    "seeds": [
+      13
+    ],
+    "epochs": 3,
+    "checkpoint_interval": 1,
+    "anneal_function": "logistic-mid"
+  },
+  "metrics": {
+    "absolute_core": {
+      "enabled": true
+    },
+    "local_topology": {
+      "enabled": false
+    },
+    "graph": {
+      "k_values": [
+        5,
+        10,
+        20
+      ],
+      "ollivier": false
+    }
+  },
+  "plots": {
+    "enabled": false,
+    "per_run": false
+  },
+  "metric_analysis": {
+    "enabled": true,
+    "rate_distortion": true,
+    "trajectory_plots": true
+  },
+  "execution": {
+    "resume_existing": true,
+    "rerun_passed": false
+  },
+  "experiment_name": "quickstart_circle",
+  "output_dir": "../outputs/quickstart_circle"
+}

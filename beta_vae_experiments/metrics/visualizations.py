@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from autoencodix import Varix
+
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -24,11 +26,12 @@ def _save_evaluation_table(frame: pd.DataFrame, stem: Path) -> None:
 
 
 def save_dimensionwise_cancer_ridgelines(
-    varix: Any,
+    varix: Varix,
     plot_dir: Path,
     parameter: str = "CANCER_TYPE_ACRONYM",
+    split: str = "test",
 ) -> list[Path]:
-    """Save one cancer-subtype ridgeline plot per posterior-mean dimension."""
+    """Save test-only cancer-subtype ridgelines per posterior-mean dimension."""
     result = varix.result
     final_epoch = int(varix.config.epochs) - 1
 
@@ -36,6 +39,12 @@ def save_dimensionwise_cancer_ridgelines(
         """Retrieve final mu with IDs and dimension names from the same snapshot."""
         template = result.get_latent_df(epoch=epoch, split=split)
         means = result.mus.get(epoch=epoch, split=split)
+        fresh = plot_dir.parent.parent / 'run_analysis' / plot_dir.name / 'posteriors' / f'posterior_{split}.npz'
+        if fresh.exists():
+            with np.load(fresh) as saved:
+                if not np.array_equal(saved['sample_ids'].astype(str), template.index.astype(str)):
+                    raise ValueError('Fresh posterior/plot sample-ID mismatch')
+                means = saved['mu']
         if hasattr(means, "detach"):
             means = means.detach().cpu().numpy()
         means = np.asarray(means, dtype=np.float64)
@@ -46,14 +55,10 @@ def save_dimensionwise_cancer_ridgelines(
             )
         return pd.DataFrame(means, index=template.index, columns=template.columns)
 
-    latent = pd.concat(
-        [
-            posterior_mean_frame("train", final_epoch),
-            posterior_mean_frame("valid", final_epoch),
-            posterior_mean_frame("test", -1),
-        ],
-        axis=0,
-    )
+    if split not in {"train", "valid", "test"}:
+        raise ValueError("split must be 'train', 'valid', or 'test'.")
+    epoch = -1 if split == "test" else final_epoch
+    latent = posterior_mean_frame(split, epoch)
     metadata = varix.visualizer._collect_all_metadata(result=result)
     if latent.empty:
         raise ValueError(
@@ -77,6 +82,7 @@ def save_dimensionwise_cancer_ridgelines(
         zip(subtype_order, sns.color_palette("tab10", n_colors=len(subtype_order)))
     )
 
+    sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
     saved: list[Path] = []
     for dimension in latent.columns:
         dimension_frame = frame[[dimension, parameter]].rename(
@@ -89,7 +95,6 @@ def save_dimensionwise_cancer_ridgelines(
             lower = float(dimension_frame["latent_value"].min())
             upper = float(dimension_frame["latent_value"].max())
 
-        sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
         grid = sns.FacetGrid(
             dimension_frame,
             row=parameter,
@@ -126,10 +131,10 @@ def save_dimensionwise_cancer_ridgelines(
         grid.set(yticks=[], ylabel="", xlabel="Posterior mean")
         grid.despine(bottom=True, left=True)
         grid.figure.suptitle(
-            f"{dimension}: posterior-mean distribution by cancer subtype"
+            f"{dimension}: posterior-mean distribution by cancer subtype ({split})"
         )
 
-        path = plot_dir / f"Ridgeline_{parameter}_{dimension}.png"
+        path = plot_dir / f"Ridgeline_{parameter}_{split}_{dimension}.png"
         grid.figure.savefig(path, dpi=300, bbox_inches="tight")
         plt.close(grid.figure)
         saved.append(path.resolve())
@@ -137,24 +142,32 @@ def save_dimensionwise_cancer_ridgelines(
 
 
 def save_varix_result_plots(
-    varix: Any,
+    varix: Varix,
     output_dir: Path,
     run_name: str,
-    params: Sequence[str] = ("SEX", "CANCER_TYPE_ACRONYM"),
+    params: Sequence[str] = (
+        "CANCER_TYPE_ACRONYM", "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT", "SEX", "AGE",
+    ),
 ) -> list[Path]:
-    """Run standard show_result/evaluate and save result and loss plots."""
+    """Save standard AUTOENCODIX plots and test-only mean ridgelines.
+
+    AUTOENCODIX ``show_result`` produces the standard 2D views of sampled ``z``:
+    direct coordinates at d=2, UMAP at d>2, with class-mean stars in that view.
+    The retired mean/PCA plot implementation is kept only in the local archive.
+    """
     plot_dir = Path(output_dir) / "plots" / run_name
     plot_dir.mkdir(parents=True, exist_ok=True)
     before = {path.resolve() for path in plot_dir.glob("*.png")}
 
     varix.show_result(params=list(params))
-    varix.visualizer.save_plots(path=str(plot_dir), which="all", format="png")
-    save_dimensionwise_cancer_ridgelines(varix, plot_dir)
+    if "CANCER_TYPE_ACRONYM" in params:
+        save_dimensionwise_cancer_ridgelines(varix, plot_dir, split="test")
 
-    evaluation_result = varix.evaluate(params=list(params))
-    evaluation = getattr(evaluation_result, "embedding_evaluation", None)
-    if isinstance(evaluation, pd.DataFrame) and not evaluation.empty:
-        _save_evaluation_table(evaluation, plot_dir / "embedding_evaluation")
+    if params:
+        evaluation_result = varix.evaluate(params=list(params))
+        evaluation = getattr(evaluation_result, "embedding_evaluation", None)
+        if isinstance(evaluation, pd.DataFrame) and not evaluation.empty:
+            _save_evaluation_table(evaluation, plot_dir / "embedding_evaluation")
     varix.visualizer.save_plots(path=str(plot_dir), which="all", format="png")
     plt.close("all")
 

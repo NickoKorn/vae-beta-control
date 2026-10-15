@@ -1,15 +1,14 @@
-"""Absolute core metrics for VAE and beta-VAE representations."""
+"""Metric implementations; the core runner selects only approved families.
 
-from .contracts import (
-    AbsoluteCoreMetricConfig,
-    AbsoluteCoreMetricResults,
-    CoreMetricInputs,
-)
-from .pipeline import run_absolute_core_metrics_pipeline
+Core orchestration lives in metric_pipeline; no separate scope registry.
+"""
+
+from .topology import TopologyMetricConfig
+from beta_vae_experiments.metrics.topology.local_topology import LocalTopologyMetricConfig
+from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig
 
 __all__ = [
-    "AbsoluteCoreMetricConfig",
-    "AbsoluteCoreMetricResults",
-    "CoreMetricInputs",
-    "run_absolute_core_metrics_pipeline",
+    "TopologyMetricConfig",
+    "LocalTopologyMetricConfig",
+    "GraphMetricConfig",
 ]

@@ -1,10 +1,22 @@
-# Audited AUTOENCODIX implementation used by the fixed-beta pipeline.
-# Pinning the commit prevents upstream changes from silently altering the loss.
+# Python 3.11; native training plus active core metrics.
 autoencodix @ git+https://github.com/jan-forest/autoencodix_package.git@b405aa3ec037552370805fb3c9f0324c3baa6895
-
-# Fixed-beta evaluation dependencies not guaranteed by AUTOENCODIX itself.
+numpy==2.3.5
+scikit-learn==1.6.1
 scikit-dimension==0.3.4
-ripser>=0.6.15
-persim>=0.3.8
+ripser==0.6.15
+persim==0.3.8
+gudhi==3.11.0
 zadu==0.4.2
-paretoset==1.2.5
+networkx==3.6.1
+igraph==1.0.0
+scikit-hubness==0.30.0a1
+# Explicit dependencies for the graph overlay installed by setup.py.
+cython
+POT>=0.8
+networkit>=6.1
+python-louvain==0.16
+packaging
+jupyterlab>=4,<5
+ipykernel>=6.29.5
+nbclient>=0.10
+pytest>=8,<10

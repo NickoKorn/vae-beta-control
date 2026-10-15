@@ -1,0 +1,35 @@
+{
+  "doi": "10.5281/zenodo.15518831",
+  "url": "https://zenodo.org/api/records/15518831/files/AutoencodixZenodoReproducibility_v2.zip/content",
+  "archive_size": 3282127319,
+  "archive_md5": "1ca80d9f4a8d602c8dea92a2073786b3",
+  "members": [
+    {
+      "name": "data_clinical_formatted.parquet",
+      "compressed_size": 780050,
+      "size": 1020432,
+      "offset": 733343240,
+      "method": 8,
+      "crc": 260205486,
+      "end_offset": 734123350
+    },
+    {
+      "name": "data_methylation_per_gene_formatted.parquet",
+      "compressed_size": 913577292,
+      "size": 972869645,
+      "offset": 1048846235,
+      "method": 8,
+      "crc": 415608732,
+      "end_offset": 1962423599
+    },
+    {
+      "name": "data_mrna_seq_v2_rsem_formatted.parquet",
+      "compressed_size": 1108082559,
+      "size": 1278869041,
+      "offset": 1962423600,
+      "method": 8,
+      "crc": 2469446463,
+      "end_offset": 3070506227
+    }
+  ]
+}

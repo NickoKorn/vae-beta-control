@@ -1,0 +1,396 @@
+{
+  "catalog_schema_version": 1,
+  "default_profile": "training.tcga",
+  "groups": {
+    "training": {
+      "defaults": {
+        "schema_version": 2,
+        "dataset": {
+          "options": {},
+          "split_seed": 2
+        },
+        "training": {
+          "learning_rates": [0.0005],
+          "losses": ["kl"],
+          "loss_reductions": ["mean"],
+          "device": "cuda",
+          "checkpoint_interval": 5,
+          "latent_dims": [2, 4, 8, 16],
+          "seeds": [13, 17, 23, 31, 47],
+          "epochs": 70
+        },
+        "metrics": {
+          "absolute_core": {
+            "enabled": true
+          },
+          "topology": {
+            "ph_visualizations_enabled": true
+          },
+          "local_topology": {
+            "enabled": true,
+            "n_neighbors": [1, 7],
+            "homology_dimensions": [0, 1],
+            "collapse_edges": false,
+            "n_jobs": 1
+          },
+          "graph": {
+            "k_values": [20],
+            "export_graphml": false,
+            "ollivier": false,
+            "max_path_nodes": 3000
+          }
+        },
+        "plots": {
+          "enabled": true,
+          "per_run": true
+        },
+        "metric_analysis": {
+          "enabled": true,
+          "rate_distortion": true,
+          "trajectory_plots": true
+        },
+        "execution": {
+          "resume_existing": true,
+          "rerun_passed": false
+        },
+        "results_date": "2026-09-29"
+      },
+      "profiles": {
+        "tcga": {
+          "dataset": {
+            "id": "tcga"
+          },
+          "training": {
+            "downstream_targets": ["CANCER_TYPE_ACRONYM", "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT", "SEX", "AGE"],
+            "betas": [
+              0,
+              1e-05,
+              2.5e-05,
+              5e-05,
+              0.0001,
+              0.00015,
+              0.0002,
+              0.0003,
+              0.0004,
+              0.0006,
+              0.00075,
+              0.001,
+              0.0015,
+              0.002,
+              0.004,
+              0.008,
+              0.012,
+              0.02,
+              0.03,
+              0.04
+            ],
+            "anneal_function": "logistic-mid"
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            }
+          },
+          "experiment_name": "biology_final_full_metrics_2026_09_22",
+          "output_dir": "../new_results_2026-09-29/biology_final_full_metrics_2026_09_22"
+        },
+        "circle": {
+          "dataset": {
+            "id": "circle"
+          },
+          "training": {
+            "betas": [0, 0.001, 0.01, 0.03, 0.1, 0.3, 1, 3],
+            "anneal_function": "logistic-mid"
+          },
+          "metrics": {
+            "topology": {
+              "srtd_quantile": 0.9
+            }
+          },
+          "experiment_name": "circle_downstream_graph_seed_validation",
+          "output_dir": "../new_results_2026-09-29/circle_downstream_graph_seed_validation"
+        },
+        "sphere": {
+          "dataset": {
+            "id": "sphere"
+          },
+          "training": {
+            "betas": [0, 0.001, 0.01, 0.03, 0.1, 0.3, 1, 3],
+            "anneal_function": "logistic-mid"
+          },
+          "metrics": {
+            "topology": {
+              "srtd_quantile": 0.9
+            }
+          },
+          "experiment_name": "sphere_downstream_graph_seed_validation",
+          "output_dir": "../new_results_2026-09-29/sphere_downstream_graph_seed_validation"
+        },
+        "swiss_roll": {
+          "dataset": {
+            "id": "swiss_roll"
+          },
+          "training": {
+            "betas": [0, 0.001, 0.01, 0.03, 0.1, 0.3, 1, 3],
+            "anneal_function": "logistic-mid"
+          },
+          "metrics": {
+            "topology": {
+              "srtd_quantile": 0.9
+            }
+          },
+          "experiment_name": "swiss_roll_downstream_graph_seed_validation",
+          "output_dir": "../new_results_2026-09-29/swiss_roll_downstream_graph_seed_validation"
+        },
+        "tcga_no_annealing": {
+          "dataset": {
+            "id": "tcga"
+          },
+          "training": {
+            "betas": [
+              0,
+              1e-05,
+              2.5e-05,
+              5e-05,
+              0.0001,
+              0.00015,
+              0.0002,
+              0.0003,
+              0.0004,
+              0.0006,
+              0.00075,
+              0.001,
+              0.0015,
+              0.002,
+              0.004,
+              0.008,
+              0.012,
+              0.02,
+              0.03,
+              0.04
+            ],
+            "anneal_function": "no-annealing"
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            }
+          },
+          "experiment_name": "biology_no_annealing_2026_09_28",
+          "output_dir": "../new_results_2026-09-29/biology_no_annealing_2026_09_28"
+        },
+        "tcga_beta_over_d": {
+          "dataset": {
+            "id": "tcga"
+          },
+          "training": {
+            "anneal_function": "no-annealing",
+            "beta_over_d": [
+              0.0,
+              1.25e-06,
+              3.125e-06,
+              6.25e-06,
+              1.25e-05,
+              1.875e-05,
+              2.5e-05,
+              3.75e-05,
+              5e-05,
+              7.5e-05,
+              9.375e-05,
+              0.000125,
+              0.0001875,
+              0.00025,
+              0.0005,
+              0.001,
+              0.0015,
+              0.0025,
+              0.00375,
+              0.005
+            ]
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            }
+          },
+          "experiment_name": "biology_beta_over_d_2026_09_29",
+          "output_dir": "../new_results_2026-09-29/biology_beta_over_d_2026_09_29"
+        }
+      }
+    },
+    "annealing": {
+      "defaults": {},
+      "profiles": {
+        "recovery": {
+          "schema_version": "fixed_beta_recovery_suite_v1",
+          "experiment_name": "annealing_recovery_2026_10_14",
+          "results_date": "2026-10-14",
+          "device": "cuda",
+          "latent_dims": [4, 8, 16],
+          "seeds": [13, 17, 23, 31],
+          "learning_rates": [0.0005],
+          "schedule_kinds": ["constant_low", "constant_high", "step", "linear", "cosine"],
+          "schedule": {
+            "initial_hold": 300,
+            "cycles": 3,
+            "ramp_up": 200,
+            "high_hold": 300,
+            "ramp_down": 200,
+            "low_hold": 300
+          },
+          "snapshots": {
+            "enabled": true,
+            "mode": "all_train_valid",
+            "every": 100,
+            "save_models": false
+          },
+          "datasets": [
+            {
+              "name": "tcga_pancancer",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_low_over_d": 5e-06,
+              "beta_high_over_d": [0.001, 0.015]
+            },
+            {
+              "name": "circle",
+              "id": "circle",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_low_over_d": 1e-05,
+              "beta_high_over_d": [0.01, 1.0]
+            },
+            {
+              "name": "sphere",
+              "id": "sphere",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_low_over_d": 1e-05,
+              "beta_high_over_d": [0.01, 1.0]
+            },
+            {
+              "name": "swiss_roll",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0
+              },
+              "beta_low_over_d": 1e-05,
+              "beta_high_over_d": [0.01, 1.0]
+            },
+            {
+              "name": "swiss_roll_correlated",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 0.02
+              },
+              "beta_low_over_d": 1e-05,
+              "beta_high_over_d": [0.01, 1.0]
+            },
+            {
+              "name": "swiss_roll_noisy_copies",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 1.0
+              },
+              "beta_low_over_d": 1e-05,
+              "beta_high_over_d": [0.01, 1.0]
+            }
+          ],
+          "analysis": {
+            "observer_metrics": [
+              "trustworthiness",
+              "continuity",
+              "lcmc",
+              "scale_normalized_stress",
+              "steadiness",
+              "cohesiveness",
+              "active_units",
+              "kl_total",
+              "effective_rank"
+            ],
+            "auc_targets": ["CANCER_TYPE_ACRONYM", "CANCER_TYPE", "SUBTYPE", "SEX", "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT"],
+            "control_uses_labels": false,
+            "recovery_comparison": "matched_epoch_constant_low_and_same_beta_before_after_excursion",
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "selection_split": "valid",
+            "test_split": "final_confirmation_only",
+            "amplitudes_are_exploratory": true,
+            "collapse_primary_measure": "unweighted_total_KL_nats_per_sample",
+            "rate_thresholds_nats_per_sample": [0.001, 0.01, 0.1],
+            "rate_thresholds_are_exploratory": true,
+            "primary_goal": "characterise_and_avoid_posterior_collapse",
+            "downstream_role": "secondary_validation_of_structure_metrics",
+            "metric_feedback_controller_enabled": false,
+            "controller_prerequisites": [
+              "validate_metric_beta_response_on_fixed_schedule",
+              "validate_metric_auc_relationship_on_held_out_seeds",
+              "predefine_structure_tolerance",
+              "check_reconstruction_and_rate_matched_baselines"
+            ],
+            "k_values": [5, 10, 20]
+          },
+          "results_root": "/run/media/nickok/0961c9a3-502d-4e5a-8183-029cb115b657/vae-beta-control/results",
+          "plots": {
+            "enabled": true,
+            "per_run": true
+          },
+          "require_results_mount": "/run/media/nickok/0961c9a3-502d-4e5a-8183-029cb115b657"
+        }
+      }
+    },
+    "analysis": {
+      "defaults": {},
+      "profiles": {
+        "encoder_geometry": {
+          "sweep": "beta_vae_experiments/new_results_2026-09-29/biology_breakpoints_2026_09_29",
+          "input_splits": "archive_06_10_26/results/biology_no_annealing_2026-09-28/biology/input_data/x_splits_split_seed2.npz",
+          "output_dir": "beta_vae_experiments/new_results_2026-10-15/encoder_geometry_analysis",
+          "geometry": {
+            "max_samples": 128,
+            "jacobian_samples": 8,
+            "k_values": [5, 10, 20],
+            "quadruples": 1024,
+            "random_state": 31,
+            "rank_rtol": 1e-07
+          }
+        }
+      }
+    }
+  },
+  "archive": "presets_archive.json",
+  "resources": {
+    "tcga_download_manifest": "../datasets/manifests/tcga_pancancer_source.json",
+    "historical_tcga_split": "../datasets/manifests/tcga_split.json"
+  }
+}

@@ -19,7 +19,6 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Experiment-development scratch files and superseded implementations
-/beta_vae_experiments/analysis.ipynb
 /beta_vae_experiments/archive/
 /beta_vae_experiments/optional/
 /beta_vae_experiments/tests/
@@ -35,6 +34,7 @@ htmlcov/
 /data
 /Real_Data_*/
 /beta_vae_experiments/outputs/
+/beta_vae_experiments/new_results_*/
 *.pt
 *.pth
 *.ckpt
@@ -42,3 +42,52 @@ htmlcov/
 # Runtime logs and temporary files
 *.log
 *.tmp
+beta_vae_experiments/training/training_grid_templates.json
+
+# Generated runs, exports, and local analysis output
+/Real_Data_*.zip
+/beta_vae_experiments/results/
+/beta_vae_experiments/results_*/
+/beta_vae_experiments/*results/
+/beta_vae_experiments/result_analysis/plots/
+/beta_vae_experiments/**/*.ipynb
+/beta_vae_experiments/datasets/*.mat
+/beta_vae_experiments/heat_update.txt
+/beta_vae_experiments/read.me
+/beta_vae_experiments/thinking_notes.md
+/make-05-00056-g004.png
+
+# Local historical code and run archives
+/archiv_06_10/
+/archive_06_10_26/
+
+# Versioned analysis notebooks; executed copies stay in ignored results folders
+!/beta_vae_experiments/analysis.ipynb
+!/beta_vae_experiments/additional_downstream_tasks.ipynb
+
+# Local secrets and credentials (examples may be committed)
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+
+# Additional local Python/tool state
+venv/
+env/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+*.egg-info/
+build/
+dist/
+coverage.xml
+.jupyter/
+
+# Local training logs and generated notebook HTML exports
+/training_logs/
+/START_HERE.html
+/beta_vae_experiments/analysis.html
+/beta_vae_experiments/additional_downstream_tasks.html

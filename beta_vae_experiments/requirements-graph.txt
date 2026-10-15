@@ -1,0 +1,4 @@
+# Install with --no-deps AFTER requirements.txt (scripts/setup.py does this).
+# Upstream declares scipy<=1.13.1; our tested Forman path uses newer SciPy.
+# All other graph dependencies are resolved normally in requirements.txt.
+GraphRicciCurvature==0.6.1
