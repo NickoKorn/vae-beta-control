@@ -38,16 +38,12 @@
     "absolute_core": {
       "enabled": true
     },
-    "local_topology": {
-      "enabled": false
-    },
     "graph": {
       "k_values": [
         5,
         10,
         20
-      ],
-      "ollivier": false
+      ]
     }
   },
   "plots": {

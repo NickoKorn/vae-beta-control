@@ -16,7 +16,7 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import spearmanr
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import shortest_path
-from ..graph.graph_builder import build_graph
+from ...graph.graph_builder import build_graph
 
 
 @dataclass(frozen=True)

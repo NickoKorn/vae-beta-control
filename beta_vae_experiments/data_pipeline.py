@@ -41,13 +41,13 @@ def build_data_config(project_root: Path, dataset_id: str, options: dict | None 
     unknown = set(options) - {"data_root", "rna_file", "methylation_file", "clinical_file"}
     if unknown:
         raise ValueError(f"Unknown TCGA dataset options: {sorted(unknown)}")
-    tutorial_root = Path(options.get("data_root", project_root / "data" / "raw" / "OntixTutorialData"))
+    tutorial_root = Path(options.get("data_root", project_root / "data" / "raw" / "TCGAPanCancerAutoencodix"))
     if not tutorial_root.is_absolute():
         tutorial_root = project_root / tutorial_root
     paths = {
-        "RNA": tutorial_root / options.get("rna_file", "combined_rnaseq_formatted.parquet"),
-        "METH": tutorial_root / options.get("methylation_file", "combined_meth_formatted.parquet"),
-        "ANNO": tutorial_root / options.get("clinical_file", "combined_clin_formatted.parquet"),
+        "RNA": tutorial_root / options.get("rna_file", "data_mrna_seq_v2_rsem_formatted.parquet"),
+        "METH": tutorial_root / options.get("methylation_file", "data_methylation_per_gene_formatted.parquet"),
+        "ANNO": tutorial_root / options.get("clinical_file", "data_clinical_formatted.parquet"),
     }
     missing = [path for path in paths.values() if not path.is_file()]
     if missing:

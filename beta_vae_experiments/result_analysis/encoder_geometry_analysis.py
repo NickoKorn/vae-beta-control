@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 from .utils import DEFAULT_SWEEP, DEFAULT_X, posterior, digest, breakpoint, correlation
-from ..metrics.graph_signals.dimension_attribution import align_rows
-from ..metrics.curvature.encoder_geometry import EncoderGeometryConfig, run_encoder_geometry_metrics_pipeline
+from ..metrics.complementary.graph_signals.dimension_attribution import align_rows
+from ..metrics.complementary.curvature.encoder_geometry import EncoderGeometryConfig, run_encoder_geometry_metrics_pipeline
 
 BASELINES = ['posterior_conditional_kl_total_mean', 'posterior_active_units_count_eps_0p01',
              'dimensionality_mu_effective_rank', 'posterior_collapsed_dimensions_fraction',
@@ -71,7 +71,7 @@ def evaluate(plan_path):
         model_path=folder/'model_final.pt'
         signature=dict(input_sha256=input_hash,posterior_sha256=digest(folder/'posteriors/posterior_test.npz'),
                        model_sha256=digest(model_path) if model_path.exists() else None,config=vars(config),
-                       metric_code_sha256=digest(Path(__file__).resolve().parents[1]/'metrics/curvature/encoder_geometry.py'),version=2)
+                       metric_code_sha256=digest(Path(__file__).resolve().parents[1]/'metrics/complementary/curvature/encoder_geometry.py'),version=2)
         cache=directory/'cache_signature.json'
         # JSON turns tuples into lists; compare the serialized canonical forms.
         canonical=json.loads(json.dumps(signature))
@@ -146,7 +146,7 @@ fehlende zurückgehaltene Bestätigung erlauben keine Controller-Empfehlung.
 
 Ob geometrische Merkmale zusätzlichen Nutzen über Rate und AUC liefern, muss mit
 zurückgehaltenen Trajektorien bestätigt werden. Dafür wurde hier kein Controller
-implementiert. Numerische Definitionen und Quellen: metrics/curvature/encoder_geometry.md.
+implementiert. Numerische Definitionen und Quellen: metrics/complementary/curvature/encoder_geometry.md.
 ''')
     (output/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
     return combined

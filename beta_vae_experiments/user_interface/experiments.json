@@ -23,20 +23,24 @@
           "absolute_core": {
             "enabled": true
           },
+          "downstream": {
+            "n_draws": 10,
+            "sampling_seed": 31,
+            "probe_seed": 31,
+            "max_iter": 1000,
+            "diagnostics_enabled": true,
+            "label_geometry_enabled": true,
+            "diagnostic_k": 20,
+            "silhouette_max_samples": 1000,
+            "diagnostic_plots": true,
+            "near_prior_epsilon": 0.01
+          },
           "topology": {
             "ph_visualizations_enabled": true
-          },
-          "local_topology": {
-            "enabled": true,
-            "n_neighbors": [1, 7],
-            "homology_dimensions": [0, 1],
-            "collapse_edges": false,
-            "n_jobs": 1
           },
           "graph": {
             "k_values": [20],
             "export_graphml": false,
-            "ollivier": false,
             "max_path_nodes": 3000
           }
         },
@@ -58,7 +62,13 @@
       "profiles": {
         "tcga": {
           "dataset": {
-            "id": "tcga"
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
           },
           "training": {
             "downstream_targets": ["CANCER_TYPE_ACRONYM", "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT", "SEX", "AGE"],
@@ -92,8 +102,8 @@
               "landscape_resolution": 100
             }
           },
-          "experiment_name": "biology_final_full_metrics_2026_09_22",
-          "output_dir": "../new_results_2026-09-29/biology_final_full_metrics_2026_09_22"
+          "experiment_name": "biology_final_full_metrics_2026_09_22_pancancer",
+          "output_dir": "../new_results_2026-09-29/biology_final_full_metrics_2026_09_22_pancancer"
         },
         "circle": {
           "dataset": {
@@ -145,7 +155,13 @@
         },
         "tcga_no_annealing": {
           "dataset": {
-            "id": "tcga"
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
           },
           "training": {
             "betas": [
@@ -178,12 +194,18 @@
               "landscape_resolution": 100
             }
           },
-          "experiment_name": "biology_no_annealing_2026_09_28",
-          "output_dir": "../new_results_2026-09-29/biology_no_annealing_2026_09_28"
+          "experiment_name": "biology_no_annealing_2026_09_28_pancancer",
+          "output_dir": "../new_results_2026-09-29/biology_no_annealing_2026_09_28_pancancer"
         },
         "tcga_beta_over_d": {
           "dataset": {
-            "id": "tcga"
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
           },
           "training": {
             "anneal_function": "no-annealing",
@@ -216,8 +238,8 @@
               "landscape_resolution": 100
             }
           },
-          "experiment_name": "biology_beta_over_d_2026_09_29",
-          "output_dir": "../new_results_2026-09-29/biology_beta_over_d_2026_09_29"
+          "experiment_name": "biology_beta_over_d_2026_09_29_pancancer",
+          "output_dir": "../new_results_2026-09-29/biology_beta_over_d_2026_09_29_pancancer"
         }
       }
     },

@@ -4,11 +4,9 @@ Core orchestration lives in metric_pipeline; no separate scope registry.
 """
 
 from .topology import TopologyMetricConfig
-from beta_vae_experiments.metrics.topology.local_topology import LocalTopologyMetricConfig
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig
 
 __all__ = [
     "TopologyMetricConfig",
-    "LocalTopologyMetricConfig",
     "GraphMetricConfig",
 ]

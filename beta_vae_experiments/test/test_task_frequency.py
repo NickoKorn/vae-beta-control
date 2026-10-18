@@ -1,4 +1,4 @@
-"""Tests for metrics/graph_signals/task_frequency.py (Part A: task frequencies and bounds)."""
+"""Tests for the complementary task-frequency analysis."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
-_DIR = Path(__file__).resolve().parents[1] / "metrics" / "graph_signals"
+_DIR = Path(__file__).resolve().parents[1] / "metrics" / "complementary" / "graph_signals"
 for _name in ("graph_spectrum", "task_frequency"):
     if _name not in sys.modules:
         _spec = importlib.util.spec_from_file_location(_name, _DIR / f"{_name}.py")

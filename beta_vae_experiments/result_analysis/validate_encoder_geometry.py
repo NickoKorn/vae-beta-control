@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from ..metrics.curvature.encoder_geometry import immersion_curvature
+from ..metrics.complementary.curvature.encoder_geometry import immersion_curvature
 
 
 def validate(output):

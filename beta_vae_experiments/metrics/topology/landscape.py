@@ -1,4 +1,12 @@
-"""GUDHI landscapes of the existing diameter-normalized finite VR diagrams."""
+"""GUDHI landscapes of the existing diameter-normalized finite VR diagrams.
+
+Literatur: Bubenik (2015), Statistical Topological Data Analysis using
+Persistence Landscapes, https://jmlr.org/papers/v16/bubenik15a.html
+Die Arbeit begründet Funktionsrepräsentationen für statistische Auswertung,
+nicht gerade unsere Anzahl/Rasterauflösung oder einen AUC-Vorhersagewert.
+Implementierung: https://gudhi.inria.fr/python/3.11.0/representations.html
+Landscapes bleiben explorative Artefakte; keine zusätzlichen Core-Prädiktoren.
+"""
 from ._diagrams import _finite_diagram
 
 from dataclasses import dataclass, asdict
@@ -15,6 +23,16 @@ NORMALIZATION = 'Ripser VR: D_X/max(D_X), D_mu/max(D_mu), separately; no second 
 
 @dataclass(frozen=True)
 class LandscapeConfig:
+    """Vorläufige Diagnoseeinstellungen, keine nachgewiesenen Optimalwerte.
+
+    Fünf Funktionen begrenzen die Auswertung auf die ersten fünf Landscape-
+    Ebenen; weitere Ebenen bleiben unberücksichtigt. 100 Punkte diskretisieren
+    deren Definitionsbereich. Bei statistischer Nutzung Anzahl/Auflösung auf
+    Entwicklung prüfen (z. B. 100 gegen 200) und ein runübergreifend festes
+    Raster verwenden. Für reine Einzelrun-Diagnostik ist das paarweise gemeinsame
+    Raster zulässig. Rohdiagramme erlauben spätere Offline-Neuberechnung.
+    """
+
     num_landscapes: int = 5
     resolution: int = 100
 
@@ -29,6 +47,16 @@ def compare_landscapes(pd_x, pd_mu, config=LandscapeConfig()):
     """Input representation: the very same normalized VR diagrams as Wasserstein.
 
     Reuse the core finite-row policy; never cap essential bars or refit per space.
+
+    Gemeinsamer Fit verhindert verschiedene X-/μ-Raster innerhalb eines Paars.
+    Der Bereich wird aber je Aufruf neu bestimmt: Raster verschiedener Runs
+    sind nicht automatisch vergleichbar. Die berechnete euklidische Vektornorm
+    ist KEIN kontinuierliches Landscape-L2-Integral (Rasterweite fehlt); GUDHIs
+    sqrt(2)-Skalierung bleibt erhalten. Auflösungsänderungen ändern diese Norm.
+    Leere Funktionsrepräsentationen sind mathematisch Nullfunktionen; wenn der
+    datenabhängige Bibliotheksfit beider leerer Diagramme keinen endlichen
+    Bereich liefert, kennzeichnen wir den derzeitigen Output als undefiniert.
+    Das ist eine Implementierungskonvention, keine undefinierte PH selbst.
     """
     started = time.perf_counter()
     originals = [np.asarray(p, dtype=float).reshape(-1, 2) for p in (pd_x, pd_mu)]

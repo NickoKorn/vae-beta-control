@@ -2,7 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from beta_vae_experiments.metrics.topology import compute_persistence_entropy
+from beta_vae_experiments.metrics.topology import (
+    compute_normalized_bottleneck_h0_h1,
+    compute_normalized_wasserstein_h0_h1,
+    compute_persistence_entropy,
+    summarize_persistence_diagrams,
+)
 
 
 def test_persistence_entropy_known_barcodes():
@@ -16,6 +21,37 @@ def test_persistence_entropy_known_barcodes():
     diagrams['topology_latent_h1_persistence_diagram'] = np.empty((0, 2))
     result = compute_persistence_entropy(diagrams, 3).set_index('metric_name')
     assert np.isnan(result.loc['topology_h1_persistence_entropy_mu', 'value'])
+
+
+def test_empty_diagram_distances_and_bar_summary():
+    empty = np.empty((0, 2))
+    one_bar = np.array([[0.2, 0.8]])
+    diagrams = {
+        'topology_input_h0_persistence_diagram': np.array([[0., 1.], [0., np.inf]]),
+        'topology_latent_h0_persistence_diagram': empty,
+        'topology_input_h1_persistence_diagram': empty,
+        'topology_latent_h1_persistence_diagram': empty,
+    }
+    wasserstein = compute_normalized_wasserstein_h0_h1(diagrams, 3).set_index('metric_name')
+    bottleneck = compute_normalized_bottleneck_h0_h1(diagrams, 3).set_index('metric_name')
+    assert wasserstein.loc['topology_h1_normalized_wasserstein', 'value'] == 0
+    assert bottleneck.loc['topology_h1_normalized_bottleneck', 'value'] == 0
+    assert wasserstein.loc['topology_h0_normalized_wasserstein', 'value'] > 0
+    assert bottleneck.loc['topology_h0_normalized_bottleneck', 'value'] > 0
+
+    diagrams['topology_latent_h1_persistence_diagram'] = one_bar
+    wasserstein = compute_normalized_wasserstein_h0_h1(diagrams, 3).set_index('metric_name')
+    bottleneck = compute_normalized_bottleneck_h0_h1(diagrams, 3).set_index('metric_name')
+    assert wasserstein.loc['topology_h1_normalized_wasserstein', 'value'] > 0
+    assert bottleneck.loc['topology_h1_normalized_bottleneck', 'value'] > 0
+
+    summary = summarize_persistence_diagrams(diagrams).set_index(
+        ['space', 'homology_dimension']
+    )
+    assert summary.loc[('x', 0), 'n_finite_bars'] == 1
+    assert summary.loc[('x', 0), 'n_essential_bars'] == 1
+    assert not bool(summary.loc[('x', 0), 'empty_diagram'])
+    assert bool(summary.loc[('mu', 0), 'empty_diagram'])
 
 
 def test_native_losses_use_exact_epoch_and_no_mse_fallback():
@@ -53,18 +89,21 @@ def test_full_core_on_small_synthetic_data(tmp_path):
     assert not result.metric_name.str.startswith('dtm_').any()
     assert not result.metric_name.str.startswith('variance_by_task_').any()
     rows = result.set_index('metric_name')
-    for name in ('topology_h0_persistence_entropy_mu',
-                 'posterior_conditional_kl_total_mean',
+    for name in ('posterior_conditional_kl_total_mean',
                  'posterior_collapsed_dimensions_fraction_eps_0p01_delta_0p01',
-                 'dimensionality_mu_twonn',
-                 'topology_landscape_h0_l2', 'topology_landscape_h1_l2'):
+                 'dimensionality_mu_twonn'):
         assert np.isfinite(rows.loc[name, 'value']), name
+    assert 'topology_landscape_h0_l2' not in rows.index
+    assert 'topology_landscape_h1_l2' not in rows.index
+    topology_dir = tmp_path / 'absolute_core_metrics_v1/topology/full'
+    assert (topology_dir / 'persistence_bar_summary.csv').exists()
+    assert (topology_dir / 'distance_scale_diagnostics.csv').exists()
+    assert not (tmp_path / 'metrics_artifacts/full/landscape/scalar_metrics.csv').exists()
+    assert 'topology_h0_persistence_entropy_mu' not in rows.index
+    assert (topology_dir / 'exploratory_entropy.csv').exists()
     assert not any(name.startswith('topology_cknn_') for name in rows.index)
     assert not (tmp_path / 'absolute_core_metrics_v1/cknn_topology').exists()
     assert not any(name.startswith('posterior_pairwise_gaussian_hellinger_') for name in rows.index)
     assert 'posterior_snr_mean' not in rows.index
     assert not any(name.startswith('local_topology_') for name in rows.index)
-    folder = tmp_path / 'absolute_core_metrics_v1/local_topology/full'
-    local_rows = pd.read_csv(folder / 'local_topology_per_anchor.csv')
-    assert len(local_rows) == 2 * len(x)
-    assert local_rows.status.eq('ok').all()
+    assert not (tmp_path / 'absolute_core_metrics_v1/local_topology').exists()

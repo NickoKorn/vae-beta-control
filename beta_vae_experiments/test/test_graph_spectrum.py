@@ -1,4 +1,4 @@
-"""Tests for the graph-frequency module metrics/graph_signals/graph_spectrum.py."""
+"""Tests for the complementary graph-frequency analysis."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from sklearn.datasets import make_blobs, make_swiss_roll
 
 # Load the module by file path: importing the package beta_vae_experiments.metrics currently
 # fails on an unrelated circular import in metrics/topology (landscape ↔ __init__).
-_PATH = Path(__file__).resolve().parents[1] / "metrics" / "graph_signals" / "graph_spectrum.py"
+_PATH = Path(__file__).resolve().parents[1] / "metrics" / "complementary" / "graph_signals" / "graph_spectrum.py"
 _spec = importlib.util.spec_from_file_location("graph_spectrum", _PATH)
 gs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gs)

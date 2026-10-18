@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 from types import SimpleNamespace
-from beta_vae_experiments.metrics.curvature.encoder_geometry import (
+from beta_vae_experiments.metrics.complementary.curvature.encoder_geometry import (
     EncoderGeometryConfig, immersion_curvature, jacobian_spectrum,
     sampled_hyperbolicity, latent_geometry, encoder_geometry,
     run_encoder_geometry_metrics_pipeline)

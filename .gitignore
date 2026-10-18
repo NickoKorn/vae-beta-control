@@ -1,4 +1,7 @@
 # macOS and editor metadata
+# Markdown documentation is maintained locally, outside version control.
+*.md
+
 .DS_Store
 **/.DS_Store
 .idea/

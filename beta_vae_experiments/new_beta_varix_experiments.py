@@ -49,7 +49,6 @@ from beta_vae_experiments.datasets import (
 )
 from beta_vae_experiments.metrics import (
     TopologyMetricConfig,
-    LocalTopologyMetricConfig,
 )
 from beta_vae_experiments.metrics.visualizations import save_varix_result_plots
 from beta_vae_experiments.result_analysis.sweep_analysis import save_sweep_analysis
@@ -59,16 +58,21 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXPERIMENT_DIR.parent
 JSON_DIR = EXPERIMENT_DIR / "user_interface"
 
-METRIC_SCHEMA_VERSION = "v23"
+METRIC_SCHEMA_VERSION = "v25"
 
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
-    from beta_vae_experiments.metrics.curvature.encoder_geometry import EncoderGeometryConfig
+    from beta_vae_experiments.metrics.complementary.curvature.encoder_geometry import EncoderGeometryConfig
+    from beta_vae_experiments.metrics.evaluation.sampled_z import DownstreamMetricConfig
     metric_settings = settings["metrics"]
     latent_usage_settings = metric_settings.get("latent_usage", {})
+    graph_settings = dict(metric_settings.get("graph", {}))
+    # Historical profiles may retain this now-complementary curvature switch.
+    graph_settings.pop("ollivier", None)
     return AbsoluteCoreMetricConfig(
         output_dir=settings["output_dir"],
-        graph=GraphMetricConfig(**metric_settings.get("graph", {})),
+        downstream=DownstreamMetricConfig(**metric_settings.get("downstream", {})),
+        graph=GraphMetricConfig(**graph_settings),
         dimensionality=DimensionalityMetricConfig(**metric_settings.get("dimensionality", {})),
         geometry=GeometryMetricConfig(**metric_settings.get("geometry", {})),
         encoder_geometry=EncoderGeometryConfig(**metric_settings.get("encoder_geometry", {})),
@@ -79,7 +83,6 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
             }
         ),
         topology=TopologyMetricConfig(**metric_settings.get("topology", {})),
-        local_topology=LocalTopologyMetricConfig(**metric_settings.get("local_topology", {})),
     )
 
 def load_experiment_config(experiment_json: Path) -> dict[str, Any]:

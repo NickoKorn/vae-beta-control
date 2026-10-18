@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 import struct
+import shutil
 import time
 from urllib.request import Request, urlopen
 import zlib
@@ -21,12 +22,37 @@ def file_crc(path):
     return crc
 
 
-def fetch(source_path, destination):
+def fetch(source_path, destination, members=None):
     source = json.loads(Path(source_path).read_text())
     destination = Path(destination)
     cache = destination / '.download'
     cache.mkdir(parents=True, exist_ok=True)
-    for member in source['members']:
+    selected = source['members']
+    if members:
+        requested = set(members)
+        available = {member['name'] for member in selected}
+        unknown = requested - available
+        if unknown:
+            raise ValueError(f'Unknown archive members: {sorted(unknown)}')
+        selected = [member for member in selected if member['name'] in requested]
+    # Keep compressed downloads for reproducibility/resume; budget both the
+    # missing archive members and extracted files, plus a modest safety margin.
+    required = 256 * 1024**2
+    pending = False
+    for member in selected:
+        target = destination / member['name']
+        if target.exists() and target.stat().st_size == member['size'] and file_crc(target) == member['crc']:
+            continue
+        pending = True
+        partial = cache / (member['name'] + '.zipmember')
+        have = partial.stat().st_size if partial.exists() else 0
+        required += member['size'] + max(0, member['end_offset'] - member['offset'] + 1 - have)
+    free = shutil.disk_usage(destination).free
+    if pending and free < required:
+        raise OSError(f'Insufficient disk space: need {required/1024**3:.2f} GiB free '
+                      f'(including retained downloads); available {free/1024**3:.2f} GiB. '
+                      'Use a destination with more free space. No data were deleted.')
+    for member in selected:
         target = destination / member['name']
         if Path(member['name']).name != member['name']:
             raise ValueError('Archive member must be a filename')
@@ -89,5 +115,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('--destination', type=Path, required=True)
+    parser.add_argument(
+        '--member', action='append', dest='members',
+        help='Fetch only this manifest member; repeat for multiple files.',
+    )
     args = parser.parse_args()
-    fetch(args.source, args.destination)
+    fetch(args.source, args.destination, members=args.members)

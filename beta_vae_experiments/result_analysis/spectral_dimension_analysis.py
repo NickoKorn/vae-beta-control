@@ -19,8 +19,8 @@ from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GroupKFold
-from beta_vae_experiments.metrics.graph_signals import graph_spectrum as gs
-from beta_vae_experiments.metrics.graph_signals.dimension_attribution import (
+from beta_vae_experiments.metrics.complementary.graph_signals import graph_spectrum as gs
+from beta_vae_experiments.metrics.complementary.graph_signals.dimension_attribution import (
     align_rows,reference_bands,fingerprints,match_dimensions,probe_ablation,ridge_reconstruct)
 
 from .utils import DEFAULT_SWEEP, DEFAULT_X, posterior, digest
@@ -348,7 +348,7 @@ def run(sweep=DEFAULT_SWEEP,xfile=DEFAULT_X,out=DEFAULT_OUT,z_draws=3,phase='all
     clinfile=ROOT.parent/'autoencodix_package/data/raw/OntixTutorialData/combined_clin_formatted.parquet'
     clin=pd.read_parquet(clinfile);clin.index=clin.index.astype(str);labels(clin,ids)
     provenance=dict(sweep=str(sweep),metrics_sha256=digest(sweep/'experiment_metrics.csv'),x_sha256=digest(xfile),clinical_sha256=digest(clinfile),posterior_sha256=hashes,z_draws=z_draws,
-                    code_sha256=digest(Path(__file__)),attribution_code_sha256=digest(Path(__file__).parents[1]/'metrics/graph_signals/dimension_attribution.py'))
+                    code_sha256=digest(Path(__file__)),attribution_code_sha256=digest(Path(__file__).parents[1]/'metrics/complementary/graph_signals/dimension_attribution.py'))
     manifest=out/'provenance.json'
     if manifest.exists() and json.loads(manifest.read_text())!=provenance:raise ValueError('Provenance changed; use a new output directory rather than stale caches')
     manifest.write_text(json.dumps(provenance,indent=2))

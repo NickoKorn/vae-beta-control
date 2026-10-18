@@ -1,4 +1,9 @@
-"""Label-free internal organization via NetworkX; see graph_metrics.md."""
+"""Ungewichtete Union-Struktur; Reciprocity auf dem gerichteten Graph.
+
+Transitivity = 3 * Dreiecke / verbundene Tripel; mittleres Clustering gewichtet
+Knoten anders. Keine allgemeine Güterichtung; k und Gradverteilung beeinflussen
+beide. Definition: https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.cluster.transitivity.html
+"""
 import networkx as nx
 import numpy as np
 

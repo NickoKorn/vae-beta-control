@@ -5,7 +5,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 from beta_vae_experiments.result_analysis.spectral_dimension_analysis import DEFAULT_OUT,safe_rho
 from .utils import DEFAULT_SWEEP, posterior
-from beta_vae_experiments.metrics.graph_signals.dimension_attribution import align_rows,match_dimensions
+from beta_vae_experiments.metrics.complementary.graph_signals.dimension_attribution import align_rows,match_dimensions
 
 
 def run(out=DEFAULT_OUT,sweep=DEFAULT_SWEEP):

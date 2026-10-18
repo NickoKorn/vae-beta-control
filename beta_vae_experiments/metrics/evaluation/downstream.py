@@ -9,6 +9,7 @@ from autoencodix.evaluate._general_evaluator import GeneralEvaluator
 from sklearn.metrics import roc_auc_score
 import numpy as np
 import pandas as pd
+from .sampled_z import DownstreamMetricConfig, run_sampled_z_metrics
 
 
 METRIC_COLUMNS = (
@@ -126,13 +127,14 @@ def run_downstream_metrics_pipeline(
     dataset_family: str | None = None,
     output_dir: Path | None = None,
     targets: tuple[str, ...] = TARGETS,
+    config: DownstreamMetricConfig | None = None,
 ) -> pd.DataFrame:
     """Run downstream probes, save their detail table, and return scalar values.
 
     Input representation:
         Sampled VARIX ``z`` representations stored on the trained ``Varix``.
     """
-    if dataset_family == "synthetic_manifold":
+    if dataset_family == "synthetic_manifold" or not targets:
         return pd.DataFrame(columns=METRIC_COLUMNS)
 
     downstream, details = compute_z_logistic_regression_probes_use_split(
@@ -157,4 +159,10 @@ def run_downstream_metrics_pipeline(
             for (target, split), group in class_auc.groupby(["CLINIC_PARAM", "score_split"]):
                 print(f"Lowest class AUCs ({target}, {split}; one-vs-rest):")
                 print(group.head(5)[["class", "value", "n_positive", "status"]].to_string(index=False))
+    config = config or DownstreamMetricConfig()
+    if config.n_draws:
+        if output_dir is None:
+            raise ValueError('Repeated z evaluation requires output_dir with saved final posteriors')
+        repeated = run_sampled_z_metrics(varix, run_name, output_dir, targets, config)
+        downstream = pd.concat([downstream, repeated], ignore_index=True)
     return downstream

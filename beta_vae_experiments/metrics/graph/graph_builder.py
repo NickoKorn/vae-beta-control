@@ -1,7 +1,13 @@
 """Canonical sklearn kNN and NetworkX union graphs; no repair or resampling.
 
 Distances are original representation distances, not affinities. Ties follow
-sklearn's deterministic ordering for the supplied row order. See graph_metrics.md.
+sklearn's deterministic ordering for the supplied row order.
+
+Ein Pfeil i→j bedeutet: j ist unter den k Nachbarn von i. Im Union-Graph reicht
+eine Richtung für eine Kante; er ist kein mutual-kNN-Graph. Strukturmetriken
+sind ungewichtet. Gleiche IDs/k verhindern keine Tie-Artefakte. Kein Jitter
+oder automatisches Reduzieren von k.
+https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.NearestNeighbors.html
 """
 from dataclasses import dataclass
 import numpy as np

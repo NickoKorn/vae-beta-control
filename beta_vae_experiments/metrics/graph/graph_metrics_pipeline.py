@@ -14,9 +14,9 @@ from beta_vae_experiments.metrics.graph.graph_neighborhood_metrics import comput
 from beta_vae_experiments.metrics.graph.graph_community_metrics import compute_communities
 from beta_vae_experiments.metrics.graph.graph_connectivity_metrics import compute_connectivity
 from beta_vae_experiments.metrics.graph.graph_path_metrics import compute_paths
-from beta_vae_experiments.metrics.curvature.graph_curvature_metrics import compute_curvature
 from beta_vae_experiments.metrics.graph.input_latent_graph_comparison import compare_graphs
 from beta_vae_experiments.metrics.graph.graph_export import export_graph
+from beta_vae_experiments.metrics.graph.label_diagnostics import compute_label_diagnostics
 
 FAMILY_OUTPUTS = {
     "global_id": ("global_id",),
@@ -26,25 +26,45 @@ FAMILY_OUTPUTS = {
     "community": ("communities", "modularity", "community_size_mean", "community_size_median", "community_size_min", "community_size_max", "largest_community_fraction", "community_entropy"),
     "connectivity": ("components", "giant_component_fraction", "isolated_nodes", "isolated_fraction", "lambda2"),
     "paths": ("lcc_average_path_length", "lcc_diameter", "global_efficiency", "betweenness_mean", "betweenness_median", "betweenness_q90", "betweenness_max"),
-    **{kind: tuple(kind+"_"+s for s in ("mean", "median", "std", "q10", "q90", "negative_fraction")) for kind in ("forman", "ollivier")},
 }
 
 
 @dataclass(frozen=True)
 class GraphMetricConfig:
+    """Explicit graph scope: k is fixed, never chosen by final test AUC.
+
+    Core families avoid repeated ID and expensive all-pairs path calculations.
+    Labels are exported separately, never concatenated to unsupervised scalars.
+    Several k values are a sensitivity pilot, not independent replications.
+    """
     # None inherits geometry.selected_k, not a separately tuned parameter.
     k_values: tuple[int, ...] | None = None
     export_graphml: bool = False
-    ollivier: bool = False
     max_path_nodes: int = 3000
+    families: tuple[str, ...] = ("hubness", "neighborhood", "community", "connectivity")
+    leiden_resolution: float = 1.0
+    leiden_iterations: int = 2
+    label_columns: tuple[str, ...] = ("CANCER_TYPE_ACRONYM", "SEX")
 
     def __post_init__(self):
+        object.__setattr__(self, "families", tuple(self.families))
+        object.__setattr__(self, "label_columns", tuple(self.label_columns))
+        if (not self.families or len(set(self.families)) != len(self.families)
+                or not set(self.families) <= set(FAMILY_OUTPUTS)):
+            raise ValueError("families must be distinct known graph families")
+        if not np.isfinite(self.leiden_resolution) or self.leiden_resolution <= 0:
+            raise ValueError("leiden_resolution must be finite and positive")
+        if type(self.leiden_iterations) is not int or self.leiden_iterations == 0 or self.leiden_iterations < -1:
+            raise ValueError("leiden_iterations must be -1 (until convergence) or positive")
+        if (len(set(self.label_columns)) != len(self.label_columns)
+                or any(not isinstance(label, str) or not label for label in self.label_columns)):
+            raise ValueError("label_columns must contain distinct nonempty strings")
         if self.k_values is not None:
             object.__setattr__(self, "k_values", tuple(self.k_values))
         if self.k_values is not None and (not self.k_values or len(set(self.k_values)) != len(self.k_values)
                 or any(isinstance(k, bool) or not isinstance(k, int) or k < 1 for k in self.k_values)):
             raise ValueError("k_values must be distinct positive integers")
-        if self.max_path_nodes < 2:
+        if type(self.max_path_nodes) is not int or self.max_path_nodes < 2:
             raise ValueError("max_path_nodes must be at least two")
 
 
@@ -58,7 +78,7 @@ def run_graph_metrics_pipeline(inputs, selected_indices, x_selected, mu_selected
     start = time.perf_counter()
     versions = {}
     for package in ("numpy", "pandas", "scipy", "scikit-learn", "scikit-dimension",
-                    "scikit-hubness", "networkx", "igraph", "GraphRicciCurvature", "python-louvain"):
+                    "scikit-hubness", "networkx", "igraph", "python-louvain"):
         try:
             versions[package] = version(package)
         except PackageNotFoundError:
@@ -82,7 +102,7 @@ def run_graph_metrics_pipeline(inputs, selected_indices, x_selected, mu_selected
                     representation="preprocessed x_test and posterior mean mu_test",
                     distance_metric=geometry.distance_metric, config=vars(config),
                     k_values=list(config.k_values or (geometry.selected_k,)),
-                    leiden_resolution=1.0, leiden_iterations=2, curvature="unit-weight Forman 1d",
+                    leiden_resolution=config.leiden_resolution, leiden_iterations=config.leiden_iterations,
                     path_scope="ASPL/diameter LCC; efficiency/betweenness whole union")
     metadata['unique_rows'] = {name: len(np.unique(values, axis=0)) for name, values in
                                (('input', x_selected), ('latent', mu_selected))}
@@ -124,38 +144,50 @@ def run_graph_metrics_pipeline(inputs, selected_indices, x_selected, mu_selected
             try:
                 if ids is None:
                     raise ValueError("Aligned sample IDs are required; positional IDs are not invented")
+                if len(np.unique(values, axis=0)) == 1:
+                    raise ValueError("Constant representation: kNN ties cannot define meaningful structure")
                 graph = build_graph(values, ids, k, geometry.distance_metric)
             except Exception as exc:
                 reason = f"{type(exc).__name__}: {exc}"
                 failures.append(dict(family="builder", representation=prefix, k=k, reason=reason))
-                record({key: np.nan for family, keys in FAMILY_OUTPUTS.items()
-                        if family != "ollivier" or config.ollivier for key in keys}, prefix, k, reason)
+                record({key: np.nan for family in config.families
+                        for key in FAMILY_OUTPUTS[family]}, prefix, k, reason)
                 continue
             families = [
                 ("global_id", lambda: compute_global_id(values)),
                 ("local_id", lambda: compute_local_id(values, k)),
                 ("hubness", lambda: compute_hubness(graph, geometry.random_state)),
                 ("neighborhood", lambda: compute_neighborhood(graph)),
-                ("community", lambda: compute_communities(graph, geometry.random_state)),
+                ("community", lambda: compute_communities(graph, geometry.random_state,
+                    config.leiden_resolution, config.leiden_iterations)),
                 ("connectivity", lambda: compute_connectivity(graph, geometry.random_state)),
                 ("paths", lambda: compute_paths(graph, config.max_path_nodes)),
-                ("forman", lambda: compute_curvature(graph)),
             ]
-            if config.ollivier:
-                families.append(("ollivier", lambda: compute_curvature(graph, ollivier=True)))
             for name, call in families:
-                run_family(name, call, prefix, k, metrics, nodes, edges)
+                if name in config.families:
+                    run_family(name, call, prefix, k, metrics, nodes, edges)
             if directory is not None:
                 run_family("export", lambda: (export_graph(graph, nodes, edges, directory/f"{prefix}k{k}", config.export_graphml,
                     getattr(inputs, "sample_metadata_test", None)) or {}), prefix, k, {}, {}, {})
+                annotations = getattr(inputs, "sample_metadata_test", None)
+                if annotations is not None and config.label_columns:
+                    try:
+                        summary, mixing = compute_label_diagnostics(graph, annotations, config.label_columns)
+                        offline = directory / "offline_labels"
+                        offline.mkdir(parents=True, exist_ok=True)
+                        summary.to_csv(offline / f"{prefix}k{k}_assortativity.csv", index=False)
+                        mixing.to_csv(offline / f"{prefix}k{k}_mixing.csv", index=False)
+                    except Exception as exc:
+                        failures.append(dict(family="offline_labels", reason=str(exc), representation=prefix, k=k))
             spaces.append((graph, metrics, nodes))
         if len(spaces) == 2:
             a, b = spaces
             run_family("comparison", lambda: compare_graphs(a[0], b[0], a[1], b[1], a[2], b[2]), "", k, {}, {}, {})
         else:
-            missing = {'delta_'+key: np.nan for family, keys in FAMILY_OUTPUTS.items()
-                       if family != 'ollivier' or config.ollivier for key in keys}
+            missing = {'delta_'+key: np.nan for family in config.families
+                       for key in FAMILY_OUTPUTS[family]}
             missing.update(partition_ari=np.nan, partition_nmi=np.nan,
+                           partition_ami=np.nan, partition_trivial=np.nan,
                            hub_identity_spearman=np.nan)
             record(missing, '', k, 'Comparison unavailable because graph construction failed')
     metadata.update(failures=failures, elapsed_seconds=time.perf_counter()-start)

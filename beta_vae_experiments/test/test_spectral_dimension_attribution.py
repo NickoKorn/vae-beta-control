@@ -1,7 +1,7 @@
 """Scientific invariants, not replicas of the calculation code."""
 import numpy as np
 import pytest
-from beta_vae_experiments.metrics.graph_signals.dimension_attribution import (
+from beta_vae_experiments.metrics.complementary.graph_signals.dimension_attribution import (
     fingerprints,align_rows,reference_bands,match_dimensions,probe_ablation)
 
 
@@ -79,7 +79,7 @@ def test_sample_centered_nullspace_energy_is_retained():
 
 
 def test_ridge_band_reconstructability_is_rotation_invariant():
-    from beta_vae_experiments.metrics.graph_signals.dimension_attribution import ridge_reconstruct
+    from beta_vae_experiments.metrics.complementary.graph_signals.dimension_attribution import ridge_reconstruct
     rng=np.random.default_rng(10);mu=rng.normal(size=(60,4));U=np.linalg.qr(np.column_stack([mu[:,:2],rng.normal(size=(60,2))]))[0]
     bands=[np.array([0,1]),np.array([2,3])]
     rotation=np.array([[.6,-.8],[.8,.6]]);V=U.copy();V[:,:2]=U[:,:2]@rotation

@@ -28,19 +28,21 @@ def test_metric_config_defaults_and_json_overrides_are_isolated(tmp_path: Path) 
         "metrics": {
             "graph": {"k_values": [5, 10]},
             "dimensionality": {"mle_n_neighbors": 12},
+            "downstream": {"n_draws": 3, "sampling_seed": 17},
             "geometry": {"selected_k": 10},
             "latent_usage": {"collapse": {"delta": 0.05, "epsilon_values": [0.01, 0.1]}},
             "topology": {"max_samples": 100},
-            "local_topology": {"n_neighbors": [2, 8]},
         },
     })
     assert configured.graph.k_values == (5, 10)
     assert configured.dimensionality.mle_n_neighbors == 12
+    assert configured.downstream.n_draws == 3
+    assert configured.downstream.sampling_seed == 17
+    assert defaults.downstream.n_draws == 10
     assert configured.geometry.selected_k == 10
     assert configured.latent_usage.collapse.delta == 0.05
     assert configured.latent_usage.collapse.epsilon_values == (0.01, 0.1)
     assert configured.topology.max_samples == 100
-    assert configured.local_topology.n_neighbors == (2, 8)
     assert defaults == build_metric_config({"output_dir": tmp_path, "metrics": {}})
     assert defaults.geometry.selected_k == 20
     assert defaults.latent_usage.collapse.delta == 0.01

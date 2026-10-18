@@ -5,21 +5,24 @@ by the main metric pipeline. The primary and only screening embedding is the
 deterministic posterior mean ``mu_test``.
 
 Primary geometry evaluation compares the preprocessed model input X with the
-deterministic posterior-mean representation mu. ZADU measures quantify
-different forms and granularities of representation distortion between these
-two aligned point clouds. The extended set is temporarily used for metric
-screening; redundant measures may be removed after cross-beta, cross-seed, and
-cross-latent-dimension analysis.
+deterministic posterior-mean representation mu.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from importlib.metadata import version
+from threading import Lock
+import hashlib
+import json
+
+from scipy.spatial.distance import pdist, squareform
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import zadu as _zadu
 from zadu import MEASURE, ZADU, make_spec
 
 
@@ -31,34 +34,88 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class GeometryMetricConfig:
-    """Aligned X→mu geometry screening and deterministic sampling controls."""
+    """Parameter des unveränderten offiziellen ZADU-Screenings.
+
+    k=20 ist unsere Referenz-Nachbarschaft, kein publiziertes Optimum. Die
+    Sensitivitätsprüfung verwendet k=5/10/20/40 auf denselben Patienten.
+    Quelle: Lee & Verleysen (2009), https://doi.org/10.1016/j.neucom.2008.12.017
+    max_samples ist ein Budget; die gemeinsame Pipeline kann weiter begrenzen.
+    random_state steuert Subsampling und den NumPy-Zufall des SNC-Adapters.
+    In ZADU 0.4.2 ignoriert SNC das übergebene k und verwendet floor(sqrt(n)).
+    """
 
     distance_metric: str = "euclidean"
     selected_k: int = 20
     max_samples: int = 3000
     random_state: int = 31
+    # Produktionsreferenz: k=20, gemeinsame euklidische X->mu-Stichprobe.
+    # Bei TopologyMetricConfig(max_samples=1000) nutzt die Hauptpipeline
+    # min(3000,1000)=1000; das tatsächliche n wird hier immer gespeichert.
+    # k/Sample-Size-Piloten sind getrennte Analysen, kein Test-AUC-Tuning.
 
     def __post_init__(self) -> None:
         if self.distance_metric != "euclidean":
             raise ValueError("geometry distance_metric must be 'euclidean'")
-        if self.selected_k < 1:
+        if type(self.selected_k) is not int or self.selected_k < 1:
             raise ValueError("geometry selected_k must be positive")
-        if self.max_samples < 3:
-            raise ValueError("geometry max_samples must be at least three")
+        if type(self.max_samples) is not int or self.max_samples < 3:
+            raise ValueError("geometry max_samples must be an integer >= three")
+        if type(self.random_state) is not int or not 0 <= self.random_state <= 2**32-1:
+            raise ValueError("geometry random_state must be an integer in [0, 2**32-1]")
 
-import dcor
 
-def calc_distance_correlation(input: np.ndarray, mu: np.ndarray) -> float:
-    """Return multivariate distance correlation for two aligned matrices."""
-    input_values = np.asarray(input, dtype=np.float64)
-    latent_values = np.asarray(mu, dtype=np.float64)
-    if input_values.ndim != 2 or latent_values.ndim != 2:
-        raise ValueError("input and mu must be two-dimensional matrices")
-    if len(input_values) != len(latent_values):
-        raise ValueError("input and mu must contain the same aligned samples")
-    if not np.isfinite(input_values).all() or not np.isfinite(latent_values).all():
-        raise ValueError("input and mu must contain only finite values")
-    return float(dcor.distance_correlation(input_values, latent_values))
+_ZADU_RNG_LOCK = Lock()
+_ZADU_SOURCE_ROOT = Path(_zadu.__file__).parent
+_ZADU_SOURCE_HASHES = {
+    str(path.relative_to(_ZADU_SOURCE_ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in sorted(_ZADU_SOURCE_ROOT.rglob("*.py"))
+}
+# Methodische Grundlagen; Formeln bleiben bei der gepinnten Bibliothek.
+ZADU_SOURCES = {
+    "implementation": "https://pypi.org/project/zadu/0.4.2/",
+    "zadu_paper": "https://doi.org/10.1109/VIS54172.2023.00048",
+    "rank_framework": "https://doi.org/10.1016/j.neucom.2008.12.017",
+    "steadiness_cohesiveness": "https://doi.org/10.1109/TVCG.2021.3114833",
+    "stress_scaling": "https://arxiv.org/abs/2408.07724",
+    "topographic_product": "https://doi.org/10.1109/72.143371",
+    "nonmetric_stress": "https://doi.org/10.1007/BF02289565",
+}
+# Was messen wir? Die Quellen stehen oben in ZADU_SOURCES.
+#
+# Trustworthiness: Kommen im Latentraum falsche Nachbarn hinzu? Höher ist besser.
+# Continuity: Gehen ursprüngliche Nachbarn verloren? Höher ist besser.
+# LCMC: Wie viele Nachbarn bleiben gemeinsam? Höher ist besser. Bei identischen
+# Daten beträgt der Wert 1-k/(n-1), nicht 1. Negative Werte sind möglich.
+# MRRE: Bleibt die Rangfolge der Nachbarn erhalten? ZADU gibt einen Gütewert
+# zurück: 1 ist optimal, obwohl der Methodenname von einem Fehler spricht.
+#
+# Neighbor Dissimilarity: Wie stark ändert sich die Nachbarschaftsstruktur?
+# Procrustes: Wie stark verformt sich die Geometrie lokaler Nachbarschaften?
+# Bei beiden bedeutet ein kleinerer Wert weniger Veränderung.
+#
+# Spearman: Bleibt die Reihenfolge der paarweisen Abstände erhalten?
+# Höher ist besser. ZADU verwendet auch die Nullen auf der Diagonale und zählt
+# jedes Paar in beiden Richtungen; wir übernehmen diese Bibliothekskonvention.
+#
+# Nichtmetrischer Stress: Passen die Abstände nach einer Anpassung zusammen,
+# die ihre Reihenfolge erhält? Skalennormierter Stress erlaubt stattdessen
+# einen gemeinsamen Streckfaktor. Bei beiden ist kleiner besser.
+# Topographic Product: Bewertet Nachbarschaftsverzerrung; ideal nahe 0.
+# Positive und negative Werte sind möglich.
+#
+# Steadiness/Cohesiveness (SNC): Bleiben Gruppenzusammenhänge erhalten?
+# Höher ist besser. ZADU 0.4.2 nutzt intern floor(sqrt(n)) Nachbarn und ignoriert
+# unser übergebenes k. Ein k-Sweep ist deshalb kein SNC-Parametersweep.
+#
+# ZADU-KL/DTM: Vergleichen geglättete Dichtegewichte von X und mu.
+# Kleiner ist besser. Das ist weder die VAE-Posterior-KL noch die klassische
+# Distance-to-a-Measure-Funktion. sigma steuert die Glättung.
+# ZADU teilt die Abstände jedes Raums durch dessen größten Abstand. Eine reine
+# Größenänderung verschwindet dadurch; Samplezahl und Ausreißer bleiben relevant.
+# Technisch: Gewicht = exp(-(Abstand/Durchmesser)**2 / sigma), einschließlich
+# des eigenen Punkts; anschließend werden die Dichtegewichte auf Summe 1 normiert.
+# Die bisherigen Ergebnisnamen bleiben erhalten.
+
 
 def _run_zadu_measure(
     specification: dict[str, Any],
@@ -96,12 +153,14 @@ class ZADUGeometryResult:
     warnings: tuple[str, ...] = ()
     # Non-metric execution facts such as the effective S&C neighborhood size.
     metadata: dict[str, Any] = field(default_factory=dict)
+    metric_statuses: dict[str, str] = field(default_factory=dict)
+    metric_warnings: dict[str, str] = field(default_factory=dict)
 
 
 def _validated_space(value: np.ndarray, name: str) -> np.ndarray:
     """Return a finite two-dimensional float64 matrix without changing rows."""
     array = np.asarray(value, dtype=np.float64)
-    if array.ndim != 2:
+    if array.ndim != 2 or min(array.shape) == 0:
         raise ValueError(f"{name} must be a two-dimensional matrix")
     if not np.isfinite(array).all():
         raise ValueError(f"{name} must contain only finite values")
@@ -113,6 +172,8 @@ def compute_zadu_geometry(
     latent_space: np.ndarray,
     k: int,
     sample_ids: np.ndarray | None = None,
+    *,
+    random_state: int = 31,
 ) -> ZADUGeometryResult:
     """Compute official measures through independent fail-isolated ZADU objects.
 
@@ -138,13 +199,15 @@ def compute_zadu_geometry(
     Limitations:
         Depends on distance, preprocessing, sample subset, and ``k``. ZADU KL
         divergence is a sensitivity metric because it depends on kernel scale
-        ``sigma`` and is not scale invariant. Related measures are not
+        ``sigma``; the pinned density implementation normalizes each diameter. Related measures are not
         independent votes.
     Direction:
         Values are stored without inversion, clipping, or rescaling.
 
     In core metrics included: Temporarily, for cross-run metric screening.
     """
+    if version("zadu") != "0.4.2":
+        raise RuntimeError("Geometry conventions are audited for zadu==0.4.2; re-audit before upgrading")
     x = _validated_space(input_space, "input_space")
     embedding = _validated_space(latent_space, "latent_space")
     if x.shape[0] != embedding.shape[0]:
@@ -154,9 +217,11 @@ def compute_zadu_geometry(
     n_samples = x.shape[0]
     if n_samples < 3:
         raise ValueError("ZADU geometry requires at least three aligned samples")
-    if not isinstance(k, (int, np.integer)):
+    if isinstance(k, (bool, np.bool_)) or not isinstance(k, (int, np.integer)):
         raise TypeError("k must be an integer")
     k = int(k)
+    if type(random_state) is not int or not 0 <= random_state <= 2**32-1:
+        raise ValueError("random_state must be an integer in [0, 2**32-1]")
     max_k = (n_samples - 1) // 2
     if not 1 <= k <= max_k:
         raise ValueError(
@@ -169,7 +234,7 @@ def compute_zadu_geometry(
         aligned_ids = np.asarray(sample_ids)
         if aligned_ids.ndim != 1 or len(aligned_ids) != n_samples:
             raise ValueError("sample_ids must be one-dimensional and aligned with X/mu")
-        if pd.Index(aligned_ids).has_duplicates:
+        if pd.Index(aligned_ids).hasnans or pd.Index(aligned_ids).has_duplicates:
             raise ValueError("sample_ids must be unique")
 
     specifications = [
@@ -184,7 +249,10 @@ def compute_zadu_geometry(
         make_spec(MEASURE.KL_DIV, sigma=0.01),
         make_spec(MEASURE.KL_DIV, sigma=0.1),
         make_spec(MEASURE.KL_DIV, sigma=1.0),
-        make_spec(MEASURE.SNC, k=k),
+        # ZADU 0.4.2 accepts but ignores k here; actual floor(sqrt(n)) is recorded.
+        # Keep upstream defaults explicit, without replacing its algorithm.
+        make_spec(MEASURE.SNC, k=k, iteration=150, walk_num_ratio=0.3,
+                  alpha=0.1, clustering_strategy="dbscan"),
         make_spec(MEASURE.TOPO, k=k),
         make_spec(MEASURE.DTM, sigma=0.1),
     ]
@@ -194,16 +262,60 @@ def compute_zadu_geometry(
     raw_results: list[dict[str, Any]] = [{} for _ in specifications]
     local_columns: dict[str, np.ndarray] = {}
 
+    space_facts = {}
+    for name, space in (("x", x), ("mu", embedding)):
+        distances = pdist(space)
+        # FAISS neighbors use float32; collisions can occur even if float64
+        # rows differ. No jitter/deduplication is performed to conceal them.
+        with np.errstate(over="ignore", invalid="ignore"):
+            float32 = space.astype(np.float32)
+        # A tied nonzero distance is reported, not resolved with artificial noise.
+        # Equal ranks can depend on backend/order even without duplicate points.
+        dmatrix = squareform(distances)
+        np.fill_diagonal(dmatrix, np.inf)
+        sorted_distances = np.sort(dmatrix, axis=1)[:, :-1]
+        tied_rows = int(np.sum(np.any(np.diff(sorted_distances, axis=1) == 0, axis=1)))
+        unique = len(np.unique(space, axis=0))
+        unique32 = len(np.unique(float32, axis=0))
+        space_facts[name] = dict(n_features=space.shape[1], unique_rows=unique, distance_tie_rows=tied_rows,
+            duplicate_rows=n_samples-unique, float32_unique_rows=unique32,
+            float32_finite=bool(np.isfinite(float32).all()),
+            diameter=float(np.max(distances)))
+    if any(f["distance_tie_rows"] for f in space_facts.values()):
+        warnings.append("Equal-distance ranks present; official backend tie conventions apply; no jitter.")
+    collapsed = any(f["diameter"] == 0 for f in space_facts.values())
+    duplicate_neighbors = any(f["float32_unique_rows"] != n_samples for f in space_facts.values())
+    invalid32 = any(not f["float32_finite"] for f in space_facts.values())
+    invalid_distances = any(not np.isfinite(f["diameter"]) for f in space_facts.values())
     for index, specification in enumerate(specifications):
-        random_state = np.random.get_state()
+        # Upstream neighbor helpers discard the first result, assuming it is
+        # self. Duplicate coordinates invalidate this assumption. Retain all
+        # rows but withhold affected scores instead of reporting arbitrary ranks.
+        neighbor_measure = "k" in specification["params"]
+        reason = None
+        if collapsed or invalid_distances:
+            reason = "A reference or embedding has zero/nonfinite diameter; preservation is undefined."
+        elif neighbor_measure and (duplicate_neighbors or invalid32):
+            reason = "Duplicate/float32-colliding rows make ZADU self-neighbor exclusion ambiguous."
+        if reason:
+            failures.append(dict(measure=str(specification["id"]), params=specification["params"],
+                stage="input_guard", exception_type="DegenerateGeometry", message=reason))
+            warnings.append(reason)
+            continue
         try:
             # ZADU SNC uses NumPy's global RNG. The seed is orchestration,
             # not a replacement or modification of the official measure.
             if str(specification["id"]) == str(MEASURE.SNC):
-                np.random.seed(31)
-            global_result, local_result = _run_zadu_measure(
-                specification, x, embedding
-            )
+                # Serialize our adapter calls; preserve the caller's RNG state.
+                with _ZADU_RNG_LOCK:
+                    caller_state = np.random.get_state()
+                    try:
+                        np.random.seed(random_state)
+                        global_result, local_result = _run_zadu_measure(specification, x, embedding)
+                    finally:
+                        np.random.set_state(caller_state)
+            else:
+                global_result, local_result = _run_zadu_measure(specification, x, embedding)
             raw_results[index] = global_result
             for name, raw_values in (local_result or {}).items():
                 local = np.asarray(raw_values)
@@ -229,8 +341,6 @@ def compute_zadu_geometry(
                 f"ZADU {measure_id} is undefined: "
                 f"{type(metric_error).__name__}: {metric_error}"
             )
-        finally:
-            np.random.set_state(random_state)
 
     tnc, lcmc, mrre, nd, proc, srho, non_metric_stress, scale_stress, *tail = raw_results
     kl_0p01, kl_0p1, kl_1p0, snc, topo, dtm = tail
@@ -250,8 +360,7 @@ def compute_zadu_geometry(
     for name, local in local_columns.items():
         local_distortions[name] = local
 
-    return ZADUGeometryResult(
-        global_metrics={
+    metrics = {
             "trustworthiness": value(tnc, "trustworthiness"),
             "continuity": value(tnc, "continuity"),
             "lcmc": value(lcmc, "lcmc"),
@@ -269,39 +378,32 @@ def compute_zadu_geometry(
             "cohesiveness": value(snc, "cohesiveness"),
             "topographic_product": value(topo, "topographic_product"),
             "distance_to_measure_sigma_0p1": value(dtm, "distance_to_measure"),
-        },
-        local_distortions=local_distortions,
-        failed_measures=tuple(failures),
-        warnings=tuple(warnings),
-        metadata={"snc_effective_k": int(k)},
-    )
+        }
+    metadata = dict(geometry_schema_version=2, snc_effective_k=int(np.sqrt(n_samples)), snc_requested_k=k,
+        snc_seed=random_state, snc_k_is_ignored_by_backend=True,
+        specifications=specifications, distance_metric="euclidean", geodesic=False,
+        n_samples=n_samples, spaces=space_facts,
+        duplicate_policy="keep rows; suppress ambiguous neighbor scores; no jitter",
+        kernel_density=dict(formula="sum_j exp(-(D_ij/max(D))**2/sigma), then normalize weights",
+            separate_diameter_normalization=True, includes_self=True,
+            dtm_convention="L1 difference of kernel-density weights; not classical DTM"),
+        versions={p: version(p) for p in ("zadu", "numpy", "scipy", "scikit-learn", "faiss-cpu")},
+        sources=ZADU_SOURCES, zadu_source_sha256=_ZADU_SOURCE_HASHES,
+        roles=dict(primary=["trustworthiness", "continuity", "lcmc"],
+            kernel_outputs="exploratory ZADU density comparisons; not posterior information metrics"),
+        backend_conventions=dict(snc_k="floor(sqrt(n)), supplied k ignored",
+            lcmc_identity="1-k/(n-1)", mrre_optimum=1,
+            spearman_pairs="full flattened distance matrices including diagonal",
+            topographic_product_direction="signed; ideal near zero"))
+    statuses = {key: "ok" if np.isfinite(v) else "degenerate_input" for key, v in metrics.items()}
+    metric_warnings = {key: "Undefined ZADU output; see per-measure failure/provenance artifacts."
+                       for key in metrics if statuses[key] != "ok"}
+    return ZADUGeometryResult(global_metrics=metrics, local_distortions=local_distortions,
+        failed_measures=tuple(failures), warnings=tuple(dict.fromkeys(warnings)), metadata=metadata,
+        metric_statuses=statuses, metric_warnings=metric_warnings)
 
 
 
-def compute_distance_correlation(
-    input_space: np.ndarray,
-    latent_space: np.ndarray,
-) -> dict[str, object]:
-    """Compute multivariate distance correlation between aligned X and mu.
-
-    Input representation:
-        Sample-aligned, finite two-dimensional ``x_test`` and ``mu_test``
-        subsets; feature dimensions may differ.
-    """
-    x = _validated_space(input_space, "input_space")
-    mu = _validated_space(latent_space, "latent_space")
-    if len(x) != len(mu):
-        raise ValueError("input_space and latent_space must contain the same aligned samples")
-    value = calc_distance_correlation(x, mu)
-    finite = np.isfinite(value)
-    return {
-        "metric_name": "geometry_x_mu_distance_correlation",
-        "value": value if finite else float("nan"),
-        "status": "ok" if finite else "degenerate_input",
-        "warning": None if finite else "Distance correlation is undefined.",
-        "n_samples": len(x),
-        "split": "test",
-    }
 
 
 def _metric_values(
@@ -368,11 +470,11 @@ def _table_row(
         **metrics,
         "snc_effective_k": result.metadata["snc_effective_k"],
         "status": "degenerate_input" if is_degenerate else "ok",
-        "warning": (
-            "; ".join(result.warnings)
-            if is_degenerate
-            else None
-        ),
+        "warning": "; ".join(result.warnings) or None,
+        "requested_k": result.metadata.get("requested_k", k),
+        "k_was_clipped": result.metadata.get("k_was_clipped", False),
+        "x_duplicate_rows": result.metadata["spaces"]["x"]["duplicate_rows"],
+        "mu_duplicate_rows": result.metadata["spaces"]["mu"]["duplicate_rows"],
         "implementation": "one public zadu.ZADU object per isolated official measure",
     }
 
@@ -394,7 +496,7 @@ def run_geometry_metrics_pipeline(
 
     Args:
         inputs:
-            Validated run data; only its run name is read here.
+            Parent arrays/IDs are checked locally; run name names the artifacts.
         selected_indices, x_selected, mu_selected:
             The aligned deterministic test subset selected by the main pipeline.
         config:
@@ -416,8 +518,18 @@ def run_geometry_metrics_pipeline(
         Yes. This is the geometry group runner; metric selection determines
         which of its outputs enter the core result.
     """
-    x = np.asarray(x_selected, dtype=np.float64)
-    mu = np.asarray(mu_selected, dtype=np.float64)
+    x = _validated_space(x_selected, "x_selected")
+    mu = _validated_space(mu_selected, "mu_selected")
+    indices = np.asarray(selected_indices)
+    if (indices.ndim != 1 or not np.issubdtype(indices.dtype, np.integer)
+            or len(indices) != len(x) or len(mu) != len(x)
+            or len(np.unique(indices)) != len(indices)
+            or (indices < 0).any() or (indices >= len(inputs.x_test)).any()):
+        raise ValueError("Geometry requires unique valid aligned selected_indices")
+    if not np.array_equal(np.asarray(inputs.x_test)[indices], x):
+        raise ValueError("Selected X does not match declared test rows")
+    if not np.array_equal(np.asarray(inputs.mu_test)[indices], mu):
+        raise ValueError("Selected mu does not match declared test rows")
     n_samples = x.shape[0]
     if n_samples < 3:
         return pd.DataFrame(columns=(
@@ -425,9 +537,7 @@ def run_geometry_metrics_pipeline(
         ))
     selected_k = min(config.selected_k, (n_samples - 1) // 2)
 
-    values = [
-        compute_distance_correlation(x, mu),
-    ]
+    values: list[dict[str, object]] = []
     selected_ids = None
     if inputs.sample_ids_test is not None:
         selected_ids = np.asarray(inputs.sample_ids_test)[
@@ -438,12 +548,20 @@ def run_geometry_metrics_pipeline(
         mu,
         selected_k,
         sample_ids=selected_ids,
+        random_state=config.random_state,
     )
     values.extend(
         _metric_values(
             mu_result, representation="mu", k=selected_k, n_samples=n_samples
         )
     )
+    mu_result.metadata.update(requested_k=config.selected_k, effective_k=selected_k,
+        k_was_clipped=selected_k != config.selected_k, configured_max_samples=config.max_samples,
+        subset_seed=config.random_state, selected_indices=indices.tolist(),
+        sample_ids=None if selected_ids is None else list(map(str, selected_ids)),
+        parent_samples=len(inputs.x_test),
+        array_sha256={name: hashlib.sha256(np.ascontiguousarray(a).tobytes()).hexdigest()
+                      for name, a in (("x", x), ("mu", mu))})
     row = _table_row(
         mu_result,
         run_name=inputs.run_name,
@@ -461,6 +579,16 @@ def run_geometry_metrics_pipeline(
     if output_dir is not None:
         directory = Path(output_dir) / "absolute_core_metrics_v1" / "geometry" / inputs.run_name
         directory.mkdir(parents=True, exist_ok=True)
+        provenance = {**mu_result.metadata, "warnings": list(mu_result.warnings),
+            "failed_measures": list(mu_result.failed_measures),
+            "metric_statuses": mu_result.metric_statuses}
+        # Manifest remains strict JSON even for a nonfinite distance diagnostic.
+        for facts in provenance["spaces"].values():
+            if facts["diameter"] is not None and not np.isfinite(facts["diameter"]):
+                facts["diameter"] = None
+        (directory / "geometry_provenance.json").write_text(
+            json.dumps(provenance, indent=2, allow_nan=False) + "\n")
+        pd.DataFrame.from_records(values).to_csv(directory / "scalar_metrics.csv", index=False)
         for name, table in tables.items():
             path = directory / f"{name}.csv"
             table.to_csv(path, index=False)
@@ -473,7 +601,6 @@ def run_geometry_metrics_pipeline(
 
 __all__ = [
     "ZADUGeometryResult",
-    "compute_distance_correlation",
     "compute_zadu_geometry",
     "run_geometry_metrics_pipeline",
 ]

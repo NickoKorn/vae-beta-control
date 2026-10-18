@@ -2,7 +2,12 @@
 
 Uses 0.30.0a1 Hubness.fit/score, without neighbor reshuffling or reduction.
 Hub occurrence is edge mass; hub fraction is fraction of library-identified
-nodes. These differ. See graph_metrics.md and Feldbauer et al., JOSS 2020.
+nodes. These differ.
+
+Radovanović et al. (2010): https://jmlr.org/papers/v11/radovanovic10a.html
+Biologische Anwendung: https://academic.oup.com/bioinformatics/article/38/4/1045/6433673
+Die Quellen belegen keine Vorhersage von TCGA-VAE-AUC-Verlusten. Weniger
+Hubness ist nicht universell besser. Tie-Auflösung nicht still randomisieren.
 """
 
 

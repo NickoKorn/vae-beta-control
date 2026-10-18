@@ -14,7 +14,6 @@ from beta_vae_experiments.metrics.graph.graph_neighborhood_metrics import comput
 from beta_vae_experiments.metrics.graph.graph_community_metrics import compute_communities
 from beta_vae_experiments.metrics.graph.graph_connectivity_metrics import compute_connectivity
 from beta_vae_experiments.metrics.graph.graph_path_metrics import compute_paths
-from beta_vae_experiments.metrics.curvature.graph_curvature_metrics import compute_curvature
 from beta_vae_experiments.metrics.graph.input_latent_graph_comparison import compare_graphs
 from beta_vae_experiments.metrics.graph.graph_export import export_graph
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig, run_graph_metrics_pipeline
@@ -89,6 +88,7 @@ def test_disconnected_paths():
 
 
 def test_curvature_and_export(cloud, tmp_path):
+    from beta_vae_experiments.metrics.complementary.curvature.graph_curvature_metrics import compute_curvature
     _, g = cloud
     metrics, nodes, edges = compute_curvature(g)
     assert all(np.isfinite(list(metrics.values())))
@@ -111,6 +111,7 @@ def test_comparison(cloud):
     assert r['partition_ari'] == 1
     assert 'directed_edge_jaccard_lcmc_related' not in r
     assert r["partition_nmi"] == 1
+    assert r["partition_ami"] == 1
     assert r["hub_identity_spearman"] == pytest.approx(1)
     assert r['delta_hubness_skewness'] == 0
     bad = build_graph(cloud[0], g.sample_ids[::-1], 5)
@@ -128,26 +129,13 @@ def test_pipeline(cloud, tmp_path):
     assert metadata['run_metadata']['beta'] == .1
     assert metadata['package_versions']['scikit-hubness']
     assert not list(tmp_path.rglob('*.graphml'))
-    result = run_graph_metrics_pipeline(inputs, np.arange(80), x, x, GraphMetricConfig(max_path_nodes=3), geometry)
+    result = run_graph_metrics_pipeline(inputs, np.arange(80), x, x,
+        GraphMetricConfig(max_path_nodes=3, families=("paths", "community")), geometry)
     failed = result.loc[result.metric_name.str.contains('lcc_average_path_length')]
     assert len(failed) == 3 and failed.status.eq('unavailable').all()
-    assert result.loc[result.metric_name.str.contains('forman_median'), 'status'].eq('ok').all()
+    assert not result.metric_name.str.contains('forman|ollivier').any()
     with pytest.raises(ValueError, match='Selected X'):
         run_graph_metrics_pipeline(inputs, np.arange(80), x[::-1], x, GraphMetricConfig(), geometry)
     invalid = run_graph_metrics_pipeline(inputs, np.arange(80), x, x, GraphMetricConfig(k_values=(80,)), geometry)
     assert invalid.value.isna().all()
     assert 'graph_delta_modularity_k80' in set(invalid.metric_name)
-
-
-def test_optional_failure_isolation(cloud, monkeypatch):
-    from beta_vae_experiments.metrics.graph import graph_metrics_pipeline as pipeline
-    x, g = cloud
-    inputs = SimpleNamespace(run_name='failure', x_test=x, sample_ids_test=g.sample_ids, metadata={})
-    geometry = SimpleNamespace(selected_k=5, random_state=31, distance_metric='euclidean')
-    def unavailable(*args, **kwargs):
-        raise ImportError('deliberate optional dependency absence')
-    monkeypatch.setattr(pipeline, 'compute_curvature', unavailable)
-    result = run_graph_metrics_pipeline(inputs, np.arange(80), x, x, GraphMetricConfig(), geometry)
-    assert result.loc[result.metric_name.str.contains('forman'), 'value'].isna().all()
-    assert result.loc[result.metric_name.str.contains('clustering'), 'status'].eq('ok').all()
-    assert any('deliberate' in str(f) for f in result.attrs['graph_metadata']['failures'])
