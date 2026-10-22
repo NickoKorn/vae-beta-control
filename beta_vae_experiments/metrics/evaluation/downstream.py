@@ -9,7 +9,19 @@ from autoencodix.evaluate._general_evaluator import GeneralEvaluator
 from sklearn.metrics import roc_auc_score
 import numpy as np
 import pandas as pd
-from .sampled_z import DownstreamMetricConfig, run_sampled_z_metrics
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class DownstreamMetricConfig:
+    n_draws: int = 10
+    sampling_seed: int = 31
+
+    def __post_init__(self):
+        if type(self.n_draws) is not int or (self.n_draws != 0 and self.n_draws < 2):
+            raise ValueError("n_draws must be zero or at least two")
+        if type(self.sampling_seed) is not int or not 0 <= self.sampling_seed < 2**32:
+            raise ValueError("sampling_seed must be a nonnegative 32-bit integer")
 
 
 METRIC_COLUMNS = (
@@ -163,6 +175,190 @@ def run_downstream_metrics_pipeline(
     if config.n_draws:
         if output_dir is None:
             raise ValueError('Repeated z evaluation requires output_dir with saved final posteriors')
-        repeated = run_sampled_z_metrics(varix, run_name, output_dir, targets, config)
+        repeated = run_native_z_draws(varix, run_name, output_dir, targets, config)
         downstream = pd.concat([downstream, repeated], ignore_index=True)
     return downstream
+
+
+def _clean(series):
+    missing = series.astype(str).str.strip().str.lower().isin(
+        ('', 'unknown', 'missing', 'nan', 'none', 'na', 'n/a', 'not reported',
+         '[not available]', '[not applicable]'))
+    return series.mask(missing)
+
+
+def snapshot_tasks(labels, min_class_train=5):
+    """Build train-defined clinical cohorts or synthetic ground-truth probes."""
+    train = labels['train']
+    tasks = []
+
+    def add(name, target, masks=None, regression=False):
+        masks = masks or {s: np.ones(len(labels[s]), dtype=bool) for s in labels}
+        y = {s: (_clean(labels[s][target]) if target in labels[s]
+                 else pd.Series(np.nan, index=labels[s].index)) for s in labels}
+        if regression:
+            y = {s: pd.to_numeric(v, errors='coerce').replace([np.inf, -np.inf], np.nan)
+                 for s, v in y.items()}
+        keep = {s: np.asarray(masks[s], dtype=bool) & y[s].notna().to_numpy() for s in labels}
+        eligible = {s: v.copy() for s, v in keep.items()}
+        if not regression:
+            y = {s: v.astype(str) for s, v in y.items()}
+            counts = y['train'][keep['train']].value_counts()
+            classes = counts[counts >= min_class_train].index
+            keep = {s: keep[s] & y[s].isin(classes).to_numpy() for s in labels}
+        tasks.append(dict(name=name, target=target, regression=regression, y=y, keep=keep,
+                          cohort=masks, eligible=eligible))
+
+    if 'CANCER_TYPE_ACRONYM' in train:
+        cancers = {s: _clean(labels[s]['CANCER_TYPE_ACRONYM']) for s in labels}
+        for name, target in (('cancer_type', 'CANCER_TYPE_ACRONYM'),
+                             ('cancer_group', 'CANCER_TYPE'),
+                             ('histology', 'CANCER_TYPE_DETAILED'),
+                             ('histology_icd', 'ICD_O_3_HISTOLOGY')):
+            add(name, target)
+        sex = _clean(train['SEX']) if 'SEX' in train else pd.Series(np.nan, index=train.index)
+        counts = pd.crosstab(cancers['train'], sex).reindex(columns=['Female', 'Male'], fill_value=0)
+        mixed = counts.index[(counts >= min_class_train).all(axis=1)]
+        add('sex_mixed_cancers', 'SEX', {s: cancers[s].isin(mixed).to_numpy()
+                                       & labels[s].get('SEX', pd.Series(index=labels[s].index, dtype=object)).isin(['Female', 'Male']).to_numpy()
+                                       for s in labels})
+        for cancer in ('BRCA', 'UCEC'):
+            add(f'subtype_{cancer}', 'SUBTYPE',
+                {s: cancers[s].eq(cancer).to_numpy() for s in labels})
+        for cancer in sorted(cancers['train'].dropna().unique()):
+            masks = {s: cancers[s].eq(cancer).to_numpy() for s in labels}
+            if cancer in mixed:
+                add(f'sex_{cancer}', 'SEX', masks)
+            add(f'stage_{cancer}', 'AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT', masks)
+        add('age', 'AGE', regression=True)
+    else:
+        # Circular coordinates are represented by sin/cos to avoid a wrap discontinuity.
+        for split, frame in labels.items():
+            if 'ground_truth_angle' in frame:
+                frame['circle_sin'], frame['circle_cos'] = np.sin(frame.ground_truth_angle), np.cos(frame.ground_truth_angle)
+            if {'ground_truth_polar', 'ground_truth_azimuth'} <= set(frame):
+                polar, azimuth = frame.ground_truth_polar, frame.ground_truth_azimuth
+                frame['sphere_x'], frame['sphere_y'], frame['sphere_z'] = np.sin(polar)*np.cos(azimuth), np.sin(polar)*np.sin(azimuth), np.cos(polar)
+        for target in ('circle_sin', 'circle_cos', 'sphere_x', 'sphere_y', 'sphere_z', 'ground_truth_t'):
+            if target in train:
+                add(target, target, regression=True)
+    return tasks
+
+
+
+def evaluate_epoch_downstream(folder, epoch, posteriors, labels, effective_beta):
+    """Save AUTOENCODIX-native Train/Validation scores and fitted-model predictions.
+
+    Reuse its presplit evaluator and default model specifications; no test data.
+    Use stored native z when supplied, otherwise a fixed local posterior draw.
+    """
+    from sklearn.linear_model import LogisticRegression, LinearRegression
+    output = Path(folder) / f'epoch_{epoch:05d}_downstream'
+    output.mkdir(parents=True, exist_ok=True)
+    scores, predictions, class_scores = [], [], []
+    tasks = snapshot_tasks(labels)
+    for representation in ('mu', 'z'):
+        features = {}
+        for split_index, (split, posterior) in enumerate(posteriors.items()):
+            values = posterior['mu']
+            if representation == 'z':
+                if 'z' in posterior:
+                    values = posterior['z']
+                else:
+                    rng = np.random.default_rng(np.random.SeedSequence([31, split_index]))
+                    values = values + np.exp(.5 * posterior['logvar']) * rng.standard_normal(values.shape)
+            features[split] = pd.DataFrame(values, index=labels[split].index)
+        for task in tasks:
+            frames, annotations, partitions = [], [], []
+            for split in ('train', 'valid'):
+                keep = task['keep'][split]
+                frame = features[split].loc[keep]
+                frames.append(frame)
+                annotations.append(task['y'][split].loc[keep].rename(task['target']))
+                partitions.append(pd.DataFrame(dict(SAMPLE_ID=frame.index, SPLIT=split)))
+            frame = pd.concat(frames)
+            annotation = pd.concat(annotations).to_frame()
+            partition = pd.concat(partitions, ignore_index=True)
+            regression = task['regression']
+            model = LinearRegression() if regression else LogisticRegression(max_iter=1000)
+            metric = 'r2' if regression else 'roc_auc_ovo'
+            evaluator = ClassAUCEvaluator()
+            try:
+                result = evaluator._single_ml_presplit(partition, frame, annotation,
+                    task['target'], model, metric,
+                    'regression' if regression else 'classification', top_k_classes=None)
+                result = result.assign(status=np.where(np.isfinite(result.value), 'ok', 'unavailable'), warning=None)
+                if result.empty:
+                    raise ValueError('No evaluable training classes')
+            except ValueError as exc:
+                result = pd.DataFrame([dict(score_split='valid', CLINIC_PARAM=task['target'],
+                    metric=metric, value=np.nan, status='unavailable', warning=str(exc))])
+            scores.append(result.assign(task=task['name'], representation=representation))
+            records = getattr(evaluator, 'class_auc_records', [])
+            if records:
+                class_scores.append(pd.DataFrame(records).assign(task=task['name'], representation=representation))
+            # The model is fitted by AUTOENCODIX, including when only scoring fails.
+            if hasattr(model, 'coef_'):
+                valid = frames[1]
+                if len(valid):
+                    prediction = pd.DataFrame(dict(sample_id=valid.index,
+                        truth=annotation.loc[valid.index, task['target']].to_numpy(),
+                        prediction=model.predict(valid), task=task['name'], representation=representation))
+                    if not regression:
+                        probabilities = model.predict_proba(valid)
+                        for column, label in enumerate(model.classes_):
+                            prediction[f'probability:{label}'] = probabilities[:, column]
+                    predictions.append(prediction)
+    for name, frames in (('scores', scores), ('predictions', predictions), ('class_auc', class_scores)):
+        table = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        table.assign(epoch=epoch, beta=effective_beta).to_csv(output / f'{name}.csv', index=False)
+
+
+def run_native_z_draws(varix, run_name, output_dir, targets, config):
+    """Evaluate fresh posterior draws with AUTOENCODIX and take score medians."""
+    from autoencodix.utils._traindynamics import TrainingDynamics
+    directory = Path(output_dir) / 'absolute_core_metrics_v1' / 'downstream' / run_name
+    posterior_dir = Path(output_dir) / 'posterior_snapshots' / run_name
+    posteriors = {}
+    for split in ('train', 'valid', 'test'):
+        with np.load(posterior_dir / f'posterior_{split}.npz', allow_pickle=False) as saved:
+            posteriors[split] = {key: saved[key].copy() for key in ('mu', 'logvar', 'sample_ids')}
+        epoch = -1 if split == 'test' else varix.result.model.config.epochs - 1
+        ids = varix.result.get_latent_df(epoch=epoch, split=split).index.astype(str)
+        if not np.array_equal(ids, posteriors[split]['sample_ids'].astype(str)):
+            raise ValueError(f'Posterior sample order differs from AUTOENCODIX: {split}')
+    original_latents = varix.result.latentspaces
+    original_scores = varix.result.embedding_evaluation
+    original_classes = getattr(varix.evaluator, 'class_auc_records', [])
+    draws = []
+    try:
+        for draw in range(config.n_draws):
+            varix.result.latentspaces = TrainingDynamics()
+            varix.result.embedding_evaluation = pd.DataFrame()
+            for split_index, (split, posterior) in enumerate(posteriors.items()):
+                rng = np.random.default_rng(np.random.SeedSequence([config.sampling_seed, draw, split_index]))
+                z = posterior['mu'] + np.exp(.5 * posterior['logvar']) * rng.standard_normal(posterior['mu'].shape)
+                if not np.isfinite(z).all():
+                    raise ValueError('Nonfinite posterior draw')
+                epoch = -1 if split == 'test' else varix.result.model.config.epochs - 1
+                varix.result.latentspaces.add(epoch=epoch, split=split, data=z)
+            _, details = compute_z_logistic_regression_probes_use_split(varix, run_name, targets)
+            draws.append(details.assign(draw=draw))
+    finally:
+        varix.result.latentspaces = original_latents
+        varix.result.embedding_evaluation = original_scores
+        varix.evaluator.class_auc_records = original_classes
+    details = pd.concat(draws, ignore_index=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    details.to_csv(directory / 'z_mc_draws.csv', index=False)
+    keys = ['score_split', 'CLINIC_PARAM', 'metric']
+    summary = details.groupby(keys, dropna=False).value.agg(['median', 'count']).reset_index()
+    complete = summary['count'].eq(config.n_draws)
+    summary.loc[~complete, 'median'] = np.nan
+    summary['n_draws'] = config.n_draws
+    summary['sampling_seed'] = config.sampling_seed
+    summary.to_csv(directory / 'z_mc_median.csv', index=False)
+    return pd.DataFrame([dict(metric_name=f'downstream_{r.CLINIC_PARAM}_z_mc_{r.score_split}_{r.metric}_median',
+        value=r.median, status='ok' if np.isfinite(r.median) else 'unavailable',
+        warning=None if np.isfinite(r.median) else 'Incomplete draw scores',
+        n_samples=None, split=r.score_split) for r in summary.itertuples(index=False)], columns=METRIC_COLUMNS)

@@ -46,7 +46,7 @@ def schedule_tag(settings):
 
 def make_scheduled_loss(settings, config):
     """Inject a scheduler through the supported native loss extension point."""
-    from beta_vae_experiments.run_artifacts import RecordedVarixLoss
+    from autoencodix.utils._losses import VarixLoss
     if config.default_vae_loss != 'kl' or config.loss_reduction != 'mean':
         raise ValueError('Fixed beta_over_d schedules require KL and mean reduction')
     if config.anneal_function == 'no-annealing':
@@ -65,7 +65,7 @@ def make_scheduled_loss(settings, config):
                 raise ValueError(f'Epoch outside schedule: {index}')
             return float(factors[index])
 
-    class ScheduledVarixLoss(RecordedVarixLoss):
+    class ScheduledVarixLoss(VarixLoss):
         def __init__(self, config, annealing_scheduler=None):
             if annealing_scheduler is not None:
                 raise ValueError('Cannot combine two annealing schedulers')

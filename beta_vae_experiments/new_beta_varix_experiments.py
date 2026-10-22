@@ -23,11 +23,6 @@ from autoencodix.data.datapackage import DataPackage
 import pandas as pd
 import numpy as np
 import torch
-from beta_vae_experiments.run_artifacts import (
-    RecordedVarixLoss, save_epoch_history, save_final_posteriors,
-    initialize_artifact_layout, verify_split_manifest,
-)
-
 from beta_vae_experiments.metric_pipeline import (
     AbsoluteCoreMetricConfig,
     run_absolute_core_metrics_pipeline,
@@ -40,8 +35,8 @@ from beta_vae_experiments.data_pipeline import (
     build_core_metric_inputs,
     build_data_config,
     prepare_metric_inputs_from_varix_result,
-    save_test_posterior,
-    verify_test_posterior,
+    save_posteriors,
+    save_epoch_snapshots,
 )
 from beta_vae_experiments.datasets import (
     generate_synthetic_dataset,
@@ -59,7 +54,7 @@ JSON_DIR = EXPERIMENT_DIR / "user_interface"
 
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
-    from beta_vae_experiments.metrics.evaluation.sampled_z import DownstreamMetricConfig
+    from beta_vae_experiments.metrics.evaluation.downstream import DownstreamMetricConfig
     metric_settings = settings["metrics"]
     if metric_settings.get("encoder_geometry", {}).get("enabled", False):
         raise ValueError("encoder_geometry was removed from the active pipeline")
@@ -82,18 +77,30 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
         topology=TopologyMetricConfig(**metric_settings.get("topology", {})),
     )
 
+def configure_epoch_snapshots(
+    settings: dict[str, Any], *, snapshot_enabled: bool | None = None,
+    snapshot_every: int | None = None, snapshot_downstream: bool | None = None,
+) -> None:
+    """Apply CLI overrides and configure native checkpoints for the requested export."""
+    snapshots = settings["training"].setdefault("snapshots", {})
+    for name, value in (("enabled", snapshot_enabled), ("every", snapshot_every),
+                        ("downstream", snapshot_downstream)):
+        if value is not None:
+            snapshots[name] = value
+    validate_snapshot_config(settings["training"])
+    if snapshots.get("enabled", False):
+        settings["training"]["checkpoint_interval"] = snapshots.get("every", 50)
+
+
 def validate_snapshot_config(training):
-    from .annealing_observer import ObserverConfig
-    snapshots = training.get('snapshots', {})
-    observer = ObserverConfig(**snapshots.get('observer', {}))
-    if snapshots.get('enabled'):
-        if snapshots.get('mode') != 'all_train_valid':
-            raise ValueError('Unsupported snapshot mode')
-        every = snapshots.get('every', 50)
-        if type(every) is not int or every < 1:
-            raise ValueError('Snapshot interval must be a positive integer')
-    elif observer.enabled:
-        raise ValueError('Annealing observer requires enabled snapshots')
+    """Check options for exporting native checkpoint arrays after training."""
+    snapshots = training.get("snapshots", {})
+    for name, default in (("enabled", False), ("downstream", True)):
+        if type(snapshots.get(name, default)) is not bool:
+            raise ValueError(f"snapshots.{name} must be boolean")
+    every = snapshots.get("every", 50)
+    if type(every) is not int or every < 1:
+        raise ValueError("Snapshot interval must be a positive integer")
 
 
 def load_experiment_config(experiment_json: Path) -> dict[str, Any]:
@@ -201,7 +208,12 @@ def build_varix_config(
         annotation_columns=([] if is_synthetic else list(training.get("downstream_targets", TARGETS))),
         data_case=DataCase.MULTI_BULK,
         epochs=int(training["epochs"]),
-        checkpoint_interval=int(training["checkpoint_interval"]),
+        checkpoint_interval=int(
+            training.get("snapshots", {}).get("every", 50)
+            if training.get("snapshots", {}).get("enabled", False)
+            else training["checkpoint_interval"]
+        ),
+        save_memory=False,
         anneal_function=str(training["anneal_function"]),
         latent_dim=int(run["latent_dim"]),
         loss_reduction=str(run["loss_reduction"]),
@@ -227,35 +239,18 @@ def prepare_fixed_data_splits(
 def run_varix_training(
     fixed_data_splits: DatasetContainer, config: VarixConfig,
     ladder: dict[str, Any] | None = None,
-    snapshots: dict[str, Any] | None = None,
-    run_folder: Path | None = None,
     beta_schedule: dict[str, Any] | None = None,
 ) -> tuple[Any, Any]:
-    """Train VARIX with the same precomputed splits used by every run.
-
-    Standard training retains RecordedVarixLoss. Optional snapshots use
-    mode="all_train_valid"; absent/disabled retains native GeneralTrainer.
-    The retired dimension-ladder backend is rejected explicitly.
-    """
-    loss_type = RecordedVarixLoss
+    """Train with the native AUTOENCODIX trainer and an optional beta schedule."""
+    from autoencodix.utils._losses import VarixLoss
+    loss_type = VarixLoss
     if ladder and ladder.get("enabled", False):
         raise ValueError("The retired dimension-ladder backend is unavailable")
     if beta_schedule:
         from beta_vae_experiments.beta_annealing import make_scheduled_loss
         loss_type = make_scheduled_loss(beta_schedule, config)
-    extra = {}
-    if snapshots and snapshots.get("enabled", False):
-        if run_folder is None:
-            raise ValueError("snapshots need the run folder")
-        if snapshots.get("mode") == "all_train_valid":
-            from beta_vae_experiments.epoch_snapshot_trainer import make_epoch_snapshot_trainer
-            extra["trainer_type"] = make_epoch_snapshot_trainer(
-                run_folder, int(snapshots.get("every", 50)), snapshots.get("save_models", False),
-                snapshots.get("observer"), beta_schedule)
-        else:
-            raise ValueError('Unsupported snapshot mode; use mode="all_train_valid"')
     varix = acx.Varix(data=fixed_data_splits, config=config, loss_type=loss_type,
-                      evaluator=ClassAUCEvaluator, **extra)
+                      evaluator=ClassAUCEvaluator)
     return varix, varix.run()
 
 
@@ -274,12 +269,10 @@ def analyse_varix_training(
     run_name: str,
     run: dict[str, Any],
     settings: dict[str, Any],
+    splits: dict[str, dict[str, Any]],
 ) -> pd.DataFrame:
     """Convert one VARIX result and run the central metric pipeline."""
     dataset = settings["dataset"]
-    splits = prepare_metric_inputs_from_varix_result(result, varix=varix)
-    verification = verify_test_posterior(splits, varix)
-    save_test_posterior(splits, settings["output_dir"], run_name, verification)
     inputs = build_core_metric_inputs(
         run_name,
         splits,
@@ -325,33 +318,68 @@ def _save_overview(frame: pd.DataFrame, output_dir: Path) -> Path:
     return path
 
 
-def run_experiment(experiment_json: Path) -> pd.DataFrame:
-    """Run fixed-split training, snapshots and the active per-run metrics."""
-    settings = load_experiment_config(experiment_json)
+def validate_experiment_settings(settings: dict[str, Any]) -> None:
+    """Check the enabled snapshot and metric configuration before preparing runs."""
     if settings.get("metric_analysis", {}).get("enabled", False):
         raise ValueError("metric_analysis was removed; disable it in the configuration")
     validate_snapshot_config(settings["training"])
     if settings["metrics"]["absolute_core"]["enabled"]:
         build_metric_config(settings)
+
+
+def create_and_save_training_grid(settings: dict[str, Any]) -> list[dict[str, Any]]:
+    """Create the run grid and save the experiment configuration and grid CSV."""
     output_dir = settings["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset_settings = settings["dataset"]
-    training = settings["training"]
-    dataset_id = str(dataset_settings["id"])
-    runs = build_training_runs(settings["experiment_name"], training)
+    runs = build_training_runs(settings["experiment_name"], settings["training"])
     if not runs:
         raise ValueError("The JSON training grid creates no runs.")
-    initialize_artifact_layout(output_dir, settings, runs)
+    (output_dir / "run_analysis").mkdir(exist_ok=True)
+    config_path = output_dir / "experiment_config.json"
+    if not config_path.exists():
+        config_path.write_text(json.dumps(settings, default=str, indent=2) + "\n")
+    grid = pd.DataFrame(runs)
+    grid["beta_over_d"] = grid.beta / grid.latent_dim
+    grid.to_csv(output_dir / "run_analysis" / "training_grid.csv", index=False)
+    return runs
 
-    data = get_synthetic_data(dataset_settings)
-    data_config = build_data_config(PROJECT_ROOT, dataset_id, dataset_settings.get("options"))
+
+def prepare_experiment_data(
+    settings: dict[str, Any], first_run: dict[str, Any]
+) -> tuple[DataConfig, DatasetContainer]:
+    """Build the data configuration and preprocess one shared set of splits."""
+    dataset = settings["dataset"]
+    dataset_id = str(dataset["id"])
+    data = get_synthetic_data(dataset)
+    data_config = build_data_config(PROJECT_ROOT, dataset_id, dataset.get("options"))
     split_config = build_varix_config(
-        data_config, dataset_id, training, runs[0],
-        global_seed=int(dataset_settings["split_seed"]),
+        data_config, dataset_id, settings["training"], first_run,
+        global_seed=int(dataset["split_seed"]),
     )
-    fixed_data_splits = prepare_fixed_data_splits(data, split_config)
-    verify_split_manifest(fixed_data_splits, output_dir)
-    overview_path = output_dir / "experiment_metrics.csv"
+    return data_config, prepare_fixed_data_splits(data, split_config)
+
+
+def save_split_manifest(fixed_data_splits: DatasetContainer, output_dir: Path) -> None:
+    """Record split IDs and refuse reuse of an output directory with changed splits."""
+    split_ids = {
+        name: list(map(str, getattr(fixed_data_splits, name).sample_ids))
+        for name in ("train", "valid", "test")
+        if getattr(fixed_data_splits, name) is not None
+    }
+    ids = [sample for values in split_ids.values() for sample in values]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate or overlapping split sample IDs")
+    split_path = output_dir / "split.json"
+    if split_path.exists() and json.loads(split_path.read_text()) != split_ids:
+        raise ValueError("Split IDs/order differ from the saved experiment; refusing resume")
+    split_path.write_text(json.dumps(split_ids, indent=2) + "\n")
+
+
+def load_experiment_progress(
+    settings: dict[str, Any],
+) -> tuple[pd.DataFrame, set[str], bool]:
+    """Load previous results, completed run names and the setting for rerunning them."""
+    overview_path = settings["output_dir"] / "experiment_metrics.csv"
     execution = settings.get("execution", {})
     resume = bool(execution.get("resume_existing", False))
     rerun = bool(execution.get("rerun_passed", False))
@@ -366,8 +394,122 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
             raise ValueError(
                 "Stored experiment overview contains duplicate or null run_name values"
             )
-    finished = (set(overview.loc[overview["status"].eq("ok"), "run_name"].astype(str))
-                if "status" in overview else set())
+    finished = (
+        set(overview.loc[overview["status"].eq("ok"), "run_name"].astype(str))
+        if "status" in overview else set()
+    )
+    return overview, finished, rerun
+
+
+def save_run_beta_schedule(
+    training: dict[str, Any], config: VarixConfig, run_folder: Path,
+) -> None:
+    """Save the effective beta schedule when the run uses a custom schedule."""
+    if training.get("beta_schedule"):
+        from beta_vae_experiments.beta_annealing import schedule_from_settings
+        schedule = schedule_from_settings(training["beta_schedule"], config.beta / config.latent_dim)
+        pd.DataFrame({
+            "epoch": np.arange(schedule.epochs) + 1,
+            "beta_over_d": schedule.factors() * config.beta / config.latent_dim,
+            "beta_config": schedule.factors() * config.beta,
+        }).to_csv(run_folder / "beta_schedule.csv", index=False)
+
+
+def save_run_loss_history(result: Any, run_folder: Path) -> None:
+    """Export native epoch losses and sub-losses in one table."""
+    history = {}
+    for name, dynamics in [("loss", result.losses), *result.sub_losses.losses()]:
+        for epoch, split_values in dynamics.get().items():
+            for split, value in split_values.items():
+                record = history.setdefault(
+                    (int(epoch), split),
+                    dict(epoch_index=int(epoch), epoch=int(epoch) + 1, split=split),
+                )
+                record[name] = float(np.asarray(value).item())
+    pd.DataFrame(history.values()).sort_values(["epoch_index", "split"]).to_csv(
+        run_folder / "epoch_losses.csv", index=False,
+    )
+
+
+def save_run_outputs(
+    varix: Any, result: Any, config: VarixConfig, settings: dict[str, Any],
+    run_name: str, run_folder: Path,
+) -> dict[str, dict[str, Any]]:
+    """Save the beta schedule, losses, final model and posterior arrays in order."""
+    save_run_beta_schedule(settings["training"], config, run_folder)
+    save_run_loss_history(result, run_folder)
+    torch.save(
+        {key: value.detach().cpu().clone()
+         for key, value in varix._trainer.get_model().state_dict().items()},
+        run_folder / "model_final.pt",
+    )
+    splits = prepare_metric_inputs_from_varix_result(result, varix=varix)
+    save_posteriors(splits, settings["output_dir"], run_name, varix)
+    return splits
+
+
+def update_experiment_overview(
+    overview: pd.DataFrame, row: pd.DataFrame, run_name: str,
+) -> pd.DataFrame:
+    """Replace the previous result row for this run in the overview."""
+    if not overview.empty:
+        overview = overview.loc[overview["run_name"] != run_name]
+    overview = pd.concat([overview, row], ignore_index=True, sort=False)
+    return overview
+
+
+def save_run_plots(varix: Any, settings: dict[str, Any], run_name: str) -> None:
+    """Save requested plots, reporting plot errors without invalidating run metrics."""
+    plots = settings.get("plots", {})
+    if plots.get("enabled") and plots.get("per_run"):
+        dataset_id = str(settings["dataset"]["id"])
+        params = [] if is_synthetic_dataset(dataset_id) else list(
+            settings["training"].get("downstream_targets", TARGETS)
+        )
+        try:
+            save_varix_result_plots(varix, settings["output_dir"], run_name, params=params)
+        except Exception as error:  # plotting must not invalidate metrics
+            print(f"Plot warning for {run_name}: {type(error).__name__}: {error}")
+
+
+def create_failed_run_record(
+    run: dict[str, Any], run_name: str, settings: dict[str, Any], error: Exception,
+) -> pd.DataFrame:
+    """Record the failed grid point and its traceback so the sweep can continue."""
+    print(
+        f"Run failed; continuing with the next configuration: {run_name}\n"
+        f"{type(error).__name__}: {error}"
+    )
+    dataset = settings["dataset"]
+    return pd.DataFrame([{
+        **run,
+        "run_name": run_name,
+        "experiment_name": settings["experiment_name"],
+        "dataset_id": dataset["id"],
+        "data_split_seed": int(dataset["split_seed"]),
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "traceback": traceback.format_exc(),
+    }])
+
+
+def run_experiment(
+    experiment_json: Path, *, snapshot_enabled: bool | None = None,
+    snapshot_every: int | None = None, snapshot_downstream: bool | None = None,
+) -> pd.DataFrame:
+    """Prepare shared data, run each configuration, and save its outputs and metrics."""
+    settings = load_experiment_config(experiment_json)
+    configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
+                             snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)
+    validate_experiment_settings(settings)
+    runs = create_and_save_training_grid(settings)
+    data_config, fixed_data_splits = prepare_experiment_data(settings, runs[0])
+    output_dir = settings["output_dir"]
+    save_split_manifest(fixed_data_splits, output_dir)
+    overview, finished, rerun = load_experiment_progress(settings)
+    training = settings["training"]
+    dataset_id = str(settings["dataset"]["id"])
 
     for index, run in enumerate(runs, start=1):
         run_name = _run_name(settings["experiment_name"], run)
@@ -378,65 +520,32 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
         varix = result = None
         try:
             config = build_varix_config(
-                data_config, dataset_id, training, run, global_seed=run["seed"]
+                data_config, dataset_id, training, run, global_seed=run["seed"],
             )
             run_folder = output_dir / "run_analysis" / run_name
+            run_folder.mkdir(parents=True, exist_ok=True)
             varix, result = run_varix_training(
-                fixed_data_splits, config, training.get("ladder"),
-                training.get("snapshots"), run_folder, training.get("beta_schedule"))
-            if training.get("beta_schedule"):
-                from beta_vae_experiments.beta_annealing import schedule_from_settings
-                schedule = schedule_from_settings(training["beta_schedule"], config.beta / config.latent_dim)
-                pd.DataFrame({"epoch": np.arange(schedule.epochs) + 1,
-                              "beta_over_d": schedule.factors() * config.beta / config.latent_dim,
-                              "beta_config": schedule.factors() * config.beta}).to_csv(
-                                  run_folder / "beta_schedule.csv", index=False)
-            save_epoch_history(result, run_folder)
-            save_final_posteriors(varix, result, run_folder)
-
+                fixed_data_splits, config, training.get("ladder"), training.get("beta_schedule"),
+            )
+            splits = save_run_outputs(varix, result, config, settings, run_name, run_folder)
+            snapshots = training.get("snapshots", {})
+            if snapshots.get("enabled", False):
+                save_epoch_snapshots(
+                    varix, run_folder, every=snapshots.get("every", 50),
+                    downstream=snapshots.get("downstream", True),
+                    beta_schedule=training.get("beta_schedule"),
+                )
             if settings["metrics"]["absolute_core"]["enabled"]:
-                row = analyse_varix_training(varix, result, run_name, run, settings)
+                row = analyse_varix_training(varix, result, run_name, run, settings, splits)
             else:
                 row = pd.DataFrame([{**run, "run_name": run_name}])
             row = row.assign(status="ok", error_type=None, error=None)
-            if not overview.empty:
-                overview = overview.loc[overview["run_name"] != run_name]
-            overview = pd.concat([overview, row], ignore_index=True, sort=False)
+            overview = update_experiment_overview(overview, row, run_name)
             _save_overview(overview, output_dir)
-
-            plots = settings.get("plots", {})
-            if plots.get("enabled") and plots.get("per_run"):
-                params = [] if is_synthetic_dataset(dataset_id) else list(
-                    training.get("downstream_targets", TARGETS)
-                )
-                try:
-                    save_varix_result_plots(
-                        varix, output_dir, run_name, params=params
-                    )
-                except Exception as error:  # plotting must not invalidate metrics
-                    print(
-                        f"Plot warning for {run_name}: "
-                        f"{type(error).__name__}: {error}"
-                    )
+            save_run_plots(varix, settings, run_name)
         except Exception as error:  # one grid point must not stop the sweep
-            print(
-                f"Run failed; continuing with the next configuration: {run_name}\n"
-                f"{type(error).__name__}: {error}"
-            )
-            failure = pd.DataFrame([{
-                **run,
-                "run_name": run_name,
-                "experiment_name": settings["experiment_name"],
-                "dataset_id": dataset_settings["id"],
-                "data_split_seed": int(dataset_settings["split_seed"]),
-                "status": "failed",
-                "error_type": type(error).__name__,
-                "error": str(error),
-                "traceback": traceback.format_exc(),
-            }])
-            if not overview.empty:
-                overview = overview.loc[overview["run_name"] != run_name]
-            overview = pd.concat([overview, failure], ignore_index=True, sort=False)
+            failure = create_failed_run_record(run, run_name, settings, error)
+            overview = update_experiment_overview(overview, failure, run_name)
             _save_overview(overview, output_dir)
         finally:
             del result, varix
@@ -447,9 +556,14 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
     return overview
 
 
-def preflight_experiment(experiment_json: Path) -> None:
+def preflight_experiment(
+    experiment_json: Path, *, snapshot_enabled: bool | None = None,
+    snapshot_every: int | None = None, snapshot_downstream: bool | None = None,
+) -> None:
     """Validate one JSON configuration without preprocessing or training."""
     settings = load_experiment_config(experiment_json)
+    configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
+                             snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)
     dataset = settings["dataset"]
     runs = build_training_runs(settings["experiment_name"], settings["training"])
     if not runs:
@@ -485,11 +599,26 @@ def main() -> None:
         action="store_true",
         help="Validate the configuration without training.",
     )
+    parser.add_argument(
+        "--epoch-snapshots", action=argparse.BooleanOptionalAction, default=None,
+        help="Export native Train/Validation checkpoint arrays after training; overrides JSON.",
+    )
+    parser.add_argument(
+        "--snapshot-every", type=int, default=None,
+        help="Checkpoint/export interval in epochs (JSON training.snapshots.every; default 50).",
+    )
+    parser.add_argument(
+        "--snapshot-downstream", action=argparse.BooleanOptionalAction, default=None,
+        help="Evaluate exported Train/Validation snapshots after training; overrides JSON.",
+    )
     arguments = parser.parse_args()
+    snapshot_options = dict(snapshot_enabled=arguments.epoch_snapshots,
+                            snapshot_every=arguments.snapshot_every,
+                            snapshot_downstream=arguments.snapshot_downstream)
     if arguments.preflight:
-        preflight_experiment(arguments.experiment_json)
+        preflight_experiment(arguments.experiment_json, **snapshot_options)
     else:
-        overview = run_experiment(arguments.experiment_json)
+        overview = run_experiment(arguments.experiment_json, **snapshot_options)
         if overview.empty or not overview["status"].eq("ok").all():
             raise SystemExit("Experiment contains failed runs; see experiment_metrics.csv")
 

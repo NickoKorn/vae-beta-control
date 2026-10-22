@@ -1,4 +1,4 @@
-"""Prepare the single-annealer experiment grid without starting training."""
+"""Generate JSON training configurations and an experiment inventory without starting training."""
 import argparse
 import copy
 import json
@@ -43,7 +43,7 @@ def prepare(suite_reference, output_dir):
                 training=dict(beta_over_d=dataset['beta_over_d'], learning_rates=suite['learning_rates'],
                     latent_dims=suite['latent_dims'], seeds=suite['seeds'], epochs=schedule.epochs,
                     losses=['kl'], loss_reductions=['mean'], device=suite['device'],
-                    checkpoint_interval=100, anneal_function='3phase-linear',
+                    checkpoint_interval=suite['snapshots'].get('every', 50), anneal_function='3phase-linear',
                     beta_schedule=suite['schedule'], snapshots=suite['snapshots'],
                     downstream_targets=suite['analysis']['auc_targets'] if dataset['id'] == 'tcga' else []),
                 metrics=dict(absolute_core=dict(enabled=True), topology=dict(max_samples=1000),

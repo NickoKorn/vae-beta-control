@@ -14,7 +14,8 @@
           "losses": ["kl"],
           "loss_reductions": ["mean"],
           "device": "cuda",
-          "checkpoint_interval": 5,
+          "checkpoint_interval": 50,
+          "snapshots": {"enabled": true, "every": 50, "downstream": true},
           "latent_dims": [2, 4, 8, 16],
           "seeds": [13, 17, 23, 31, 47],
           "epochs": 70
@@ -25,15 +26,7 @@
           },
           "downstream": {
             "n_draws": 10,
-            "sampling_seed": 31,
-            "probe_seed": 31,
-            "max_iter": 1000,
-            "diagnostics_enabled": true,
-            "label_geometry_enabled": true,
-            "diagnostic_k": 20,
-            "silhouette_max_samples": 1000,
-            "diagnostic_plots": true,
-            "near_prior_epsilon": 0.01
+            "sampling_seed": 31
           },
           "topology": {
             "ph_visualizations_enabled": true
@@ -267,18 +260,8 @@
           ],
           "snapshots": {
             "enabled": true,
-            "mode": "all_train_valid",
             "every": 50,
-            "save_models": false,
-            "observer": {
-              "enabled": true,
-              "max_samples": 512,
-              "k": 20,
-              "seed": 31,
-              "z_draws": 3,
-              "max_iter": 1000,
-              "min_class_train": 5
-            }
+            "downstream": true
           },
           "datasets": [
             {

@@ -13,7 +13,6 @@ import pandas as pd
 import torch
 import json
 import pickle
-import warnings
 from beta_vae_experiments.metric_pipeline import CoreMetricInputs
 from beta_vae_experiments.datasets import is_synthetic_dataset
 
@@ -74,7 +73,8 @@ def build_data_config(project_root: Path, dataset_id: str, options: dict | None 
     )
 
 
-def _to_numpy(value: Any) -> np.ndarray | None:
+def to_numpy(value: Any) -> np.ndarray | None:
+    """Convert arrays, tensors, sparse matrices or a single-array mapping to NumPy."""
     if value is None:
         return None
     if isinstance(value, dict):
@@ -85,7 +85,7 @@ def _to_numpy(value: Any) -> np.ndarray | None:
                 "AUTOENCODIX returned multiple named arrays where one VARIX "
                 f"matrix was expected: {tuple(value)}"
             )
-        return _to_numpy(next(iter(value.values())))
+        return to_numpy(next(iter(value.values())))
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().numpy()
     if hasattr(value, "toarray"):
@@ -112,23 +112,23 @@ def prepare_metric_inputs_from_varix_result(
     for split in ("train", "valid", "test"):
         dataset = getattr(result.datasets, split)
         split_data: dict[str, Any] = {
-            "x": _to_numpy(dataset.data),
+            "x": to_numpy(dataset.data),
             "sample_metadata": getattr(dataset, "metadata", None),
-            "sample_ids": _to_numpy(
+            "sample_ids": to_numpy(
                 result.sample_ids.get(split=split, epoch=epoch)
             ),
         }
 
         for name in ("reconstructions", "mus", "sigmas", "latentspaces"):
             dynamics = getattr(result, name)
-            value = _to_numpy(dynamics.get(split=split, epoch=epoch))
+            value = to_numpy(dynamics.get(split=split, epoch=epoch))
             source = "result"
             missing = value is None or value.size == 0
             #Missing posterior
             if missing and epoch == -1 and split == "test" and name in buffer_names:
                 buffer = getattr(trainer, buffer_names[name], None)
                 buffered = buffer.get("test") if isinstance(buffer, dict) else None
-                candidate = _to_numpy(buffered)
+                candidate = to_numpy(buffered)
                 if (
                     candidate is not None
                     and candidate.ndim == 2
@@ -146,67 +146,9 @@ def prepare_metric_inputs_from_varix_result(
     return splits
 
 
-def verify_test_posterior(splits: dict[str, dict[str, Any]], varix: Any) -> dict:
-    """Check posterior consistency, recording small FP32 differences as warnings.
-
-    The original rtol=1e-5/atol=1e-7 remains the diagnostic threshold.
-    FP32 inference permits atol=1e-6 with the same rtol; larger discrepancies
-    still fail. This absolute allowance is an engineering verification policy,
-    not a collapse threshold. Stored posterior values are never altered.
-    """
-    test = splits["test"]
-    trainer = varix._trainer
-    model = trainer.get_model()
-    parameter = next(model.parameters())
-    means, logvars = [], []
-    was_training = model.training
-    model.eval()
-    try:
-        with torch.inference_mode(), trainer._fabric.autocast():
-            for start in range(0, len(test["x"]), trainer._config.batch_size):
-                x = torch.as_tensor(
-                    test["x"][start:start + trainer._config.batch_size],
-                    device=parameter.device, dtype=parameter.dtype,
-                )
-                mu, logvar = model.encode(x)
-                means.append(_to_numpy(mu))
-                logvars.append(_to_numpy(logvar))
-    finally:
-        model.train(was_training)
-    checks = {"verification_status": "ok", "warnings": [],
-              "comparison_rtol": 1e-5, "diagnostic_atol": 1e-7}
-    for key, batches in (("mus", means), ("sigmas", logvars)):
-        fresh = np.concatenate(batches)
-        stored = test[key]
-        if stored is None or fresh.shape != stored.shape:
-            raise ValueError(f"Fresh encoder {key} does not match stored posterior shape")
-        if not np.isfinite(stored).all() or not np.isfinite(fresh).all():
-            raise ValueError(f"Non-finite {key} in stored or fresh posterior")
-        # Do not silently widen tolerances for float16/bfloat16 inference.
-        atol = 1e-6 if fresh.dtype == np.float32 else 1e-7
-        np.testing.assert_allclose(stored, fresh, rtol=1e-5, atol=atol,
-                                   equal_nan=False,
-                                   err_msg=f"Fresh encoder {key} disagrees with stored posterior")
-        difference = np.abs(stored.astype(np.float64) - fresh.astype(np.float64))
-        outside_strict = difference > (1e-7 + 1e-5 * np.abs(fresh.astype(np.float64)))
-        checks[f"{key}_max_abs_difference"] = float(np.max(difference))
-        checks[f"{key}_diagnostic_exceedance_count"] = int(outside_strict.sum())
-        checks[f"{key}_comparison_atol"] = atol
-        checks[f"{key}_inference_dtype"] = str(fresh.dtype)
-        if outside_strict.any():
-            message = (f"Fresh encoder {key}: {outside_strict.sum()} values exceed "
-                       f"the strict diagnostic tolerance, but pass rtol=1e-5, atol={atol:g}; "
-                       f"max absolute difference={difference.max():.9g}. Stored values retained.")
-            checks["verification_status"] = "numerical_warning"
-            checks["warnings"].append(message)
-            warnings.warn(message, RuntimeWarning, stacklevel=2)
-    checks["fresh_encoder_verified"] = True
-    return checks
-
-
-def save_test_posterior(splits: dict[str, dict[str, Any]], output_dir: Path,
-                        run_name: str, verification: dict | None = None) -> Path:
-    """Persist real posterior arrays and collapse diagnostics before other metrics.
+def save_posteriors(splits: dict[str, dict[str, Any]], output_dir: Path,
+                        run_name: str, varix: Any) -> Path:
+    """Save final Train/Valid/Test posteriors once, plus test collapse diagnostics.
 
     This also keeps the outcome recoverable if a structural metric fails.
     Missing posterior values are never replaced with synthetic zeros.
@@ -220,17 +162,37 @@ def save_test_posterior(splits: dict[str, dict[str, Any]], output_dir: Path,
     kl = compute_conditional_kl_matrix(test["mus"], test["sigmas"])
     folder = Path(output_dir) / "posterior_snapshots" / run_name
     folder.mkdir(parents=True, exist_ok=True)
-    temporary = folder / "posterior_test.tmp.npz"
-    np.savez_compressed(
-        temporary, mu=test["mus"], logvar=test["sigmas"],
-        sample_ids=np.asarray(test["sample_ids"], dtype=str),
-    )
-    temporary.replace(folder / "posterior_test.npz")
+    # Test is already final-model inference; encode Train/Valid with that same model.
+    trainer = varix._trainer
+    model = trainer.get_model()
+    parameter = next(model.parameters())
+    was_training = model.training
+    try:
+        model.eval()
+        with torch.inference_mode(), trainer._fabric.autocast():
+            for split, values in splits.items():
+                ids = np.asarray(values['sample_ids'], dtype=str)
+                mu, logvar = values['mus'], values['sigmas']
+                if split != 'test':
+                    batches = []
+                    for start in range(0, len(values['x']), trainer._config.batch_size):
+                        batch = torch.as_tensor(values['x'][start:start + trainer._config.batch_size],
+                                                device=parameter.device, dtype=parameter.dtype)
+                        batches.append(tuple(to_numpy(v) for v in model.encode(batch)))
+                    mu, logvar = (np.concatenate(parts) for parts in zip(*batches))
+                if mu.shape != logvar.shape or len(mu) != len(ids) or not (
+                        np.isfinite(mu).all() and np.isfinite(logvar).all()):
+                    raise ValueError(f'Invalid final posterior: {split}')
+                temporary = folder / f'posterior_{split}.tmp.npz'
+                np.savez_compressed(temporary, mu=mu, logvar=logvar, sample_ids=ids)
+                temporary.replace(folder / f'posterior_{split}.npz')
+    finally:
+        model.train(was_training)
     (folder / "provenance.json").write_text(json.dumps({
-        "run_name": run_name, "split": "test",
+        "run_name": run_name, "splits": list(splits),
+        "train_valid_source": "fresh_final_model_eval", "diagnostic_split": "test",
         "mu_source": test["mus_source"],
         "logvar_source": test["sigmas_source"],
-        "verification": verification,
         "mu_abs_max": float(np.max(np.abs(test["mus"]))),
         "logvar_min": float(np.min(test["sigmas"])),
         "logvar_max": float(np.max(test["sigmas"])),
@@ -300,3 +262,68 @@ def load_file(file_path: str | Path):
 
 
 __all__ = ["load_file"]
+
+
+def save_epoch_snapshots(varix, run_folder, every=50, downstream=True, beta_schedule=None):
+    """Save recorded Train/Validation arrays every N epochs and at the final epoch.
+
+    Train arrays come from batch updates; Validation arrays from native eval mode.
+    No model is re-encoded, and no historical model weights are exported.
+    """
+    from .metrics.evaluation.downstream import evaluate_epoch_downstream
+    if type(every) is not int or every < 1:
+        raise ValueError("Snapshot interval must be a positive integer")
+    result, config = varix.result, varix.config
+    folder = Path(run_folder) / "epoch_snapshots"
+    folder.mkdir(parents=True, exist_ok=True)
+    metadata = varix.visualizer._collect_all_metadata(result=result)
+    metadata.index = metadata.index.astype(str)
+    factors = None
+    if beta_schedule:
+        from .beta_annealing import schedule_from_settings
+        factors = schedule_from_settings(beta_schedule, config.beta / config.latent_dim).factors()
+    records = []
+    for epoch in result.latentspaces.epochs():
+        if epoch < 0 or ((epoch + 1) % every and epoch != config.epochs - 1):
+            continue
+        posteriors, labels = {}, {}
+        for split in ("train", "valid"):
+            arrays = {}
+            for key, name in (("mu", "mus"), ("logvar", "sigmas"), ("z", "latentspaces"),
+                              ("sample_ids", "sample_ids")):
+                value = to_numpy(getattr(result, name).get(epoch=epoch, split=split))
+                if value is not None and value.size:
+                    arrays[key] = value.astype(str) if key == "sample_ids" else value
+            if "z" not in arrays:
+                continue
+            path = folder / f"epoch_{epoch+1:05d}_{split}.npz"
+            np.savez_compressed(path, **arrays)
+            missing = sorted({"mu", "logvar", "z", "sample_ids"} - arrays.keys())
+            records.append(dict(epoch=epoch+1, split=split, file=path.name,
+                                status="missing_arrays" if missing else "ok", missing=",".join(missing)))
+            if not missing:
+                posteriors[split] = arrays
+                labels[split] = metadata.loc[arrays["sample_ids"]].copy()
+                label_path = folder / f"labels_{split}.parquet"
+                if not label_path.exists():
+                    labels[split].to_parquet(label_path)
+        if downstream:
+            if set(posteriors) != {"train", "valid"}:
+                print(f"Snapshot epoch {epoch+1}: native posterior arrays missing; downstream unavailable")
+                continue
+            factor = 1.
+            if factors is not None:
+                factor = factors[epoch]
+            elif config.anneal_function != "no-annealing":
+                from autoencodix.utils._annealer import AnnealingScheduler
+                factor = AnnealingScheduler().get_weight(epoch_current=epoch,
+                    total_epoch=config.epochs, func=config.anneal_function)
+            evaluate_epoch_downstream(folder, epoch+1, posteriors, labels, config.beta * factor)
+    pd.DataFrame(records, columns=["epoch", "split", "file", "status", "missing"]).to_csv(
+        folder / "snapshot_index.csv", index=False)
+    (folder / "provenance.json").write_text(json.dumps(dict(
+        source="autoencodix_training_dynamics", every=every,
+        train="captured during batch updates", valid="captured during validation",
+        exported_after_training=True, splits=["train", "valid"],
+    ), indent=2) + "\n")
+    return folder
