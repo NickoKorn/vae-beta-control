@@ -7,7 +7,7 @@ import torch
 from autoencodix.trainers._general_trainer import GeneralTrainer
 
 
-def make_epoch_snapshot_trainer(folder, every=100, save_models=False):
+def make_epoch_snapshot_trainer(folder, every=50, save_models=False, observer=None, beta_schedule=None):
     """Store all train/validation posteriors; test remains for final evaluation.
 
     Runs after native validation, independent of checkpoint_interval. torch RNG
@@ -17,11 +17,13 @@ def make_epoch_snapshot_trainer(folder, every=100, save_models=False):
     if not isinstance(every, int) or every < 1:
         raise ValueError('snapshot interval must be a positive integer')
     folder = Path(folder) / 'epoch_snapshots'
+    from .annealing_observer import ObserverConfig, aligned_annotations, observe_snapshot
+    observer_config = ObserverConfig(**(observer or {}))
 
     class PosteriorSnapshotTrainer(GeneralTrainer):
         def _validate_epoch(self, should_checkpoint, epoch):
             result = super()._validate_epoch(should_checkpoint, epoch)
-            if (epoch + 1) % every == 0 or epoch + 1 == self._config.epochs:
+            if epoch == 0 or (epoch + 1) % every == 0 or epoch + 1 == self._config.epochs:
                 self._save_epoch_posteriors(epoch)
             return result
 
@@ -40,10 +42,11 @@ def make_epoch_snapshot_trainer(folder, every=100, save_models=False):
                         if len(ids) != len(set(ids)) or len(x) != len(ids):
                             raise ValueError('Invalid snapshot input IDs')
                         reference = folder / f'input_{split}.npz'
+                        label_path = folder / f'labels_{split}.parquet'
+                        if not label_path.exists():
+                            aligned_annotations(dataset.metadata, ids).to_parquet(label_path)
                         if not reference.exists():
                             np.savez_compressed(reference, x=x, sample_ids=ids)
-                            if isinstance(dataset.metadata, pd.DataFrame):
-                                dataset.metadata.to_parquet(folder / f'labels_{split}.parquet')
                         else:
                             with np.load(reference) as saved:
                                 if not np.array_equal(saved['sample_ids'], ids):
@@ -71,5 +74,15 @@ def make_epoch_snapshot_trainer(folder, every=100, save_models=False):
                 'epoch': epoch + 1, 'every': every, 'splits': ['train', 'valid'],
                 'test_during_training': False, 'model_states_saved': save_models,
             }, indent=2) + '\n')
+            if observer_config.enabled:
+                if beta_schedule:
+                    from .beta_annealing import schedule_from_settings
+                    factor = schedule_from_settings(beta_schedule,
+                        self._config.beta / self._config.latent_dim).factors()[epoch]
+                else:
+                    from autoencodix.utils._annealer import AnnealingScheduler
+                    factor = AnnealingScheduler().get_weight(epoch_current=epoch,
+                        total_epoch=self._config.epochs, func=self._config.anneal_function)
+                observe_snapshot(folder, epoch+1, vars(observer_config), self._config.beta * factor)
 
     return PosteriorSnapshotTrainer

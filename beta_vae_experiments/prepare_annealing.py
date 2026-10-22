@@ -69,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('suite', nargs='?', default=str(CATALOG) + '#annealing.warmup')
     parser.add_argument('--output-dir', type=Path,
-                        default=Path(__file__).resolve().parent / 'new_results_2026-10-22' / 'annealing_warmup_design')
+                        default=Path(__file__).resolve().parent / 'new_results_2026-10-22' / 'annealing_observed_design')
     args = parser.parse_args()
     inventory = prepare(args.suite, args.output_dir)
     print(inventory.to_string(index=False))

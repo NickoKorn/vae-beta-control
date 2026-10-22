@@ -116,3 +116,4 @@ coverage.xml
 !/beta_vae_experiments/prepare_annealing.py
 !/beta_vae_experiments/bash_scripts/
 !/beta_vae_experiments/bash_scripts/run_annealing.sh
+!/beta_vae_experiments/annealing_observer.py

@@ -268,8 +268,17 @@
           "snapshots": {
             "enabled": true,
             "mode": "all_train_valid",
-            "every": 100,
-            "save_models": false
+            "every": 50,
+            "save_models": false,
+            "observer": {
+              "enabled": true,
+              "max_samples": 512,
+              "k": 20,
+              "seed": 31,
+              "z_draws": 3,
+              "max_iter": 1000,
+              "min_class_train": 5
+            }
           },
           "datasets": [
             {
@@ -366,7 +375,7 @@
             "per_run": true
           },
           "schema_version": "linear_beta_warmup_suite_v1",
-          "experiment_name": "annealing_warmup_2026_10_22",
+          "experiment_name": "annealing_observed_2026_10_22",
           "results_date": "2026-10-22",
           "schedule": {
             "kind": "linear_warmup",

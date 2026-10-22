@@ -57,8 +57,6 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXPERIMENT_DIR.parent
 JSON_DIR = EXPERIMENT_DIR / "user_interface"
 
-METRIC_SCHEMA_VERSION = "v29"
-
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
     from beta_vae_experiments.metrics.evaluation.sampled_z import DownstreamMetricConfig
@@ -83,6 +81,20 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
         ),
         topology=TopologyMetricConfig(**metric_settings.get("topology", {})),
     )
+
+def validate_snapshot_config(training):
+    from .annealing_observer import ObserverConfig
+    snapshots = training.get('snapshots', {})
+    observer = ObserverConfig(**snapshots.get('observer', {}))
+    if snapshots.get('enabled'):
+        if snapshots.get('mode') != 'all_train_valid':
+            raise ValueError('Unsupported snapshot mode')
+        every = snapshots.get('every', 50)
+        if type(every) is not int or every < 1:
+            raise ValueError('Snapshot interval must be a positive integer')
+    elif observer.enabled:
+        raise ValueError('Annealing observer requires enabled snapshots')
+
 
 def load_experiment_config(experiment_json: Path) -> dict[str, Any]:
     from beta_vae_experiments.user_interface.config import read_config
@@ -238,7 +250,8 @@ def run_varix_training(
         if snapshots.get("mode") == "all_train_valid":
             from beta_vae_experiments.epoch_snapshot_trainer import make_epoch_snapshot_trainer
             extra["trainer_type"] = make_epoch_snapshot_trainer(
-                run_folder, int(snapshots.get("every", 100)), snapshots.get("save_models", False))
+                run_folder, int(snapshots.get("every", 50)), snapshots.get("save_models", False),
+                snapshots.get("observer"), beta_schedule)
         else:
             raise ValueError('Unsupported snapshot mode; use mode="all_train_valid"')
     varix = acx.Varix(data=fixed_data_splits, config=config, loss_type=loss_type,
@@ -296,7 +309,6 @@ def analyse_varix_training(
     return run_overview.assign(
         experiment_name=settings["experiment_name"],
         dataset_id=dataset["id"], data_split_seed=int(dataset["split_seed"]),
-        metric_schema_version=METRIC_SCHEMA_VERSION,
         **run,
     )
 
@@ -318,9 +330,7 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
     settings = load_experiment_config(experiment_json)
     if settings.get("metric_analysis", {}).get("enabled", False):
         raise ValueError("metric_analysis was removed; disable it in the configuration")
-    snapshots = settings["training"].get("snapshots", {})
-    if snapshots.get("enabled") and snapshots.get("mode") != "all_train_valid":
-        raise ValueError("Unsupported snapshot mode")
+    validate_snapshot_config(settings["training"])
     if settings["metrics"]["absolute_core"]["enabled"]:
         build_metric_config(settings)
     output_dir = settings["output_dir"]
@@ -356,13 +366,8 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
             raise ValueError(
                 "Stored experiment overview contains duplicate or null run_name values"
             )
-    if "metric_schema_version" in overview:
-        current_rows = overview["metric_schema_version"].eq(METRIC_SCHEMA_VERSION)
-        if "status" in overview:
-            current_rows &= overview["status"].eq("ok")
-        finished = set(overview.loc[current_rows, "run_name"].astype(str))
-    else:
-        finished = set()
+    finished = (set(overview.loc[overview["status"].eq("ok"), "run_name"].astype(str))
+                if "status" in overview else set())
 
     for index, run in enumerate(runs, start=1):
         run_name = _run_name(settings["experiment_name"], run)
@@ -392,8 +397,7 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
             if settings["metrics"]["absolute_core"]["enabled"]:
                 row = analyse_varix_training(varix, result, run_name, run, settings)
             else:
-                row = pd.DataFrame([{**run, "run_name": run_name,
-                                     "metric_schema_version": METRIC_SCHEMA_VERSION}])
+                row = pd.DataFrame([{**run, "run_name": run_name}])
             row = row.assign(status="ok", error_type=None, error=None)
             if not overview.empty:
                 overview = overview.loc[overview["run_name"] != run_name]
@@ -425,7 +429,6 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
                 "experiment_name": settings["experiment_name"],
                 "dataset_id": dataset_settings["id"],
                 "data_split_seed": int(dataset_settings["split_seed"]),
-                "metric_schema_version": METRIC_SCHEMA_VERSION,
                 "status": "failed",
                 "error_type": type(error).__name__,
                 "error": str(error),
@@ -454,9 +457,7 @@ def preflight_experiment(experiment_json: Path) -> None:
     build_metric_config(settings)
     if settings.get("metric_analysis", {}).get("enabled", False):
         raise ValueError("metric_analysis was removed; disable it in the configuration")
-    snapshots = settings["training"].get("snapshots", {})
-    if snapshots.get("enabled") and snapshots.get("mode") != "all_train_valid":
-        raise ValueError("Unsupported snapshot mode")
+    validate_snapshot_config(settings["training"])
     data_config = build_data_config(PROJECT_ROOT, str(dataset["id"]), dataset.get("options"))
     config = build_varix_config(data_config, str(dataset["id"]), settings["training"],
                                 runs[0], global_seed=runs[0]["seed"])

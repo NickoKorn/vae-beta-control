@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${REPO}/.venv/bin/python"
-CONFIG_DIR="${2:-${REPO}/beta_vae_experiments/new_results_2026-10-22/annealing_warmup_design/configs}"
+CONFIG_DIR="${2:-${REPO}/beta_vae_experiments/new_results_2026-10-22/annealing_observed_design/configs}"
 MODE="${1:---preflight}"
 if [[ "${MODE}" != --preflight && "${MODE}" != --run ]]; then
     printf 'Usage: bash %s [--preflight|--run] [config_directory]\n' "$0" >&2
