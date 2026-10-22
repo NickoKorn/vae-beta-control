@@ -94,3 +94,14 @@ coverage.xml
 /START_HERE.html
 /beta_vae_experiments/analysis.html
 /beta_vae_experiments/additional_downstream_tasks.html
+
+# Track updates to existing files only. New files require an explicit
+# `git add -f <path>` after review; tracked files are unaffected by ignore rules.
+*
+!/.gitignore
+
+# Renamed topology module required by the existing imports.
+!/beta_vae_experiments/
+!/beta_vae_experiments/metrics/
+!/beta_vae_experiments/metrics/topology/
+!/beta_vae_experiments/metrics/topology/latent_descriptor.py

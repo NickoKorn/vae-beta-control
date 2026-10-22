@@ -248,20 +248,21 @@
       "profiles": {
         "recovery": {
           "schema_version": "fixed_beta_recovery_suite_v1",
-          "experiment_name": "annealing_recovery_2026_10_14",
-          "results_date": "2026-10-14",
+          "experiment_name": "annealing_recovery_2026_10_20",
+          "results_date": "2026-10-20",
+          "split_seeds": [2, 3, 5],
           "device": "cuda",
           "latent_dims": [4, 8, 16],
           "seeds": [13, 17, 23, 31],
           "learning_rates": [0.0005],
           "schedule_kinds": ["constant_low", "constant_high", "step", "linear", "cosine"],
           "schedule": {
-            "initial_hold": 300,
+            "initial_hold": 100,
             "cycles": 3,
-            "ramp_up": 200,
-            "high_hold": 300,
-            "ramp_down": 200,
-            "low_hold": 300
+            "ramp_up": 60,
+            "high_hold": 90,
+            "ramp_down": 60,
+            "low_hold": 90
           },
           "snapshots": {
             "enabled": true,

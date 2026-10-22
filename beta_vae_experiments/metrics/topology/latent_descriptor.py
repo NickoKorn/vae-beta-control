@@ -1,4 +1,4 @@
-"""Latent-only: deskriptive Topologie einer einzelnen Repräsentation.
+"""Latent descriptors: deskriptive Topologie einer einzelnen Repräsentation.
 
 Für die Masterarbeit:
 Die persistente Homologie beschreibt Zusammenhangskomponenten (H0) und
@@ -9,8 +9,8 @@ für sich genommen keine Preservation. Eine Schleife ist kein Nachweis eines
 biologischen Zyklus; eine Komponente entspricht nicht automatisch einer Klasse.
 
 Die Hilfsfunktionen können zur Referenzdiagnostik auch X beschreiben und geben
-historisch beide Räume getrennt aus. „Latent-only“ bezeichnet die Messart,
-nicht das Verbot, dieselben Deskriptoren auch auf X anzuwenden.
+beide Räume getrennt aus. „Latent descriptor“ bezeichnet die deskriptive
+Messart; dieselben Deskriptoren werden auch auf X als Referenz angewendet.
 Landscapes bleiben als optionale Funktionsdarstellungen in landscape.py.
 Quellen: Bubenik (2015), https://jmlr.org/papers/v16/bubenik15a.html ;
 Atienza et al., https://arxiv.org/abs/1803.08304 .
@@ -66,11 +66,6 @@ def summarize_persistence_diagrams(
             })
     return pd.DataFrame.from_records(rows)
 
-
-
-
-
-
 def compute_persistence_entropy(diagrams, n_samples):
     """GUDHI scalar Shannon entropy of positive finite bar lengths (natural log).
 
@@ -100,8 +95,6 @@ def compute_persistence_entropy(diagrams, n_samples):
                 records.append(dict(metric_name=name, value=value, status='ok',
                                     warning=None, n_samples=n_samples, split='test'))
     return pd.DataFrame(records)
-
-
 
 def compute_betti_curve_artifacts(
     diagrams: dict[str, np.ndarray],

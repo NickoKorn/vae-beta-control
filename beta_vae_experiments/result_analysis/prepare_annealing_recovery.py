@@ -15,6 +15,14 @@ from beta_vae_experiments.beta_annealing import schedule_from_settings
 
 def prepare(suite_path, output_dir):
     suite = load_config(suite_path)
+    split_seeds = suite.get('split_seeds')
+    if split_seeds is not None:
+        if (not split_seeds or len(set(split_seeds)) != len(split_seeds)
+                or any(type(seed) is not int or seed < 0 for seed in split_seeds)):
+            raise ValueError('split_seeds must be distinct nonnegative integers')
+        confirmation = suite['analysis'].get('held_out_confirmation', {}).get('split_seed')
+        if confirmation in split_seeds:
+            raise ValueError('Development splits must exclude the held-out confirmation split')
     output_dir = Path(output_dir)
     configs = output_dir / 'configs'
     configs.mkdir(parents=True, exist_ok=True)
@@ -51,15 +59,21 @@ def prepare(suite_path, output_dir):
             # The two constant-low amplitudes describe the same trajectory: export once.
             if kind == 'constant_low':
                 settings['training']['beta_over_d'] = [high]
-            (configs / f'{name}.json').write_text(json.dumps(settings, indent=2) + '\n')
             for amplitude in settings['training']['beta_over_d']:
                 actual = schedule_from_settings(schedule_settings, amplitude)
                 frame = pd.DataFrame({'epoch': np.arange(actual.epochs) + 1,
                                       'beta_over_d': amplitude * actual.factors()})
                 frame.to_csv(output_dir / f'{dataset["name"]}_{kind}_high{amplitude:g}.csv', index=False)
             runs = len(settings['training']['beta_over_d']) * len(suite['seeds']) * len(suite['latent_dims']) * len(suite['learning_rates'])
-            overview.append(dict(dataset=dataset['name'], schedule=kind, runs=runs, epochs=schedule.epochs,
-                                 training_epochs_total=runs * schedule.epochs, config=f'{name}.json'))
+            for split_seed in split_seeds or [dataset['split_seed']]:
+                split_name = f'{name}_split{split_seed}' if split_seeds is not None else name
+                settings['experiment_name'] = split_name
+                settings['output_dir'] = str((output_dir / split_name).resolve())
+                settings['dataset']['split_seed'] = split_seed
+                (configs / f'{split_name}.json').write_text(json.dumps(settings, indent=2) + '\n')
+                overview.append(dict(dataset=dataset['name'], split_seed=split_seed,
+                                     schedule=kind, runs=runs, epochs=schedule.epochs,
+                                     training_epochs_total=runs * schedule.epochs, config=f'{split_name}.json'))
         axis.set(title=dataset['name'], xlabel='Epoch', ylabel='β/d')
         axis.set_yscale('symlog', linthresh=dataset['beta_low_over_d'])
         axis.legend(ncol=5, frameon=False)

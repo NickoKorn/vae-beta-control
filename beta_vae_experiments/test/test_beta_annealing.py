@@ -81,3 +81,35 @@ def test_unmounted_results_location_fails_before_training(tmp_path):
     path.write_text(json.dumps(dict(output_dir='ignored', require_results_mount=str(tmp_path))))
     with pytest.raises(FileNotFoundError, match='not mounted'):
         load_experiment_config(path)
+
+
+def test_recovery_suite_crosses_splits_and_training_seeds(tmp_path):
+    import json
+    from beta_vae_experiments.user_interface.config import CATALOG, load_config
+    from beta_vae_experiments.result_analysis.prepare_annealing_recovery import prepare
+    from beta_vae_experiments.new_beta_varix_experiments import build_training_runs
+    suite = load_config(str(CATALOG) + '#annealing.recovery')
+    suite['datasets'] = [next(d for d in suite['datasets'] if d['name'] == 'circle')]
+    source = tmp_path / 'suite.json'
+    source.write_text(json.dumps(suite))
+    destination = tmp_path / 'prepared'
+    inventory = prepare(source, destination)
+    assert len(inventory) == 3 * len(suite['schedule_kinds'])
+    assert set(inventory.split_seed) == {2, 3, 5}
+    assert inventory.config.is_unique
+    assert inventory.epochs.eq(1000).all()
+    names = set()
+    for row in inventory.itertuples():
+        config = json.loads((destination / 'configs' / row.config).read_text())
+        assert config['dataset']['split_seed'] == row.split_seed
+        assert config['dataset']['options']['dataset_seed'] == 42
+        assert config['training']['seeds'] == [13, 17, 23, 31]
+        assert config['experiment_name'] not in names
+        names.add(config['experiment_name'])
+        runs = build_training_runs(config['experiment_name'], config['training'])
+        assert len(runs) == row.runs
+        assert {run['seed'] for run in runs} == {13, 17, 23, 31}
+    suite['split_seeds'] = [2, 7]
+    source.write_text(json.dumps(suite))
+    with pytest.raises(ValueError, match='held-out'):
+        prepare(source, tmp_path / 'invalid')

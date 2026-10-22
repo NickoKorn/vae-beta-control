@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${REPO}/.venv/bin/python"
-CONFIG_DIR="${1:-${REPO}/beta_vae_experiments/new_results_2026-10-14/annealing_recovery_design/configs}"
+CONFIG_DIR="${1:-${REPO}/beta_vae_experiments/new_results_2026-10-20/annealing_recovery_design/configs}"
 export PYTHONHASHSEED=2 CUBLAS_WORKSPACE_CONFIG=:4096:8
 export MPLCONFIGDIR=/tmp/beta-vae-matplotlib
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1

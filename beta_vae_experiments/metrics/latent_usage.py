@@ -10,6 +10,8 @@ Sensitivity-only diagnostics:
 - Additional epsilon values are persisted only in the collapse-curve artifacts.
 - AUTOENCODIX latent coverage is reported explicitly as a sensitivity/confirmatory
   diagnostic using the pinned AUTOENCODIX implementation.
+- Pairwise Gaussian Hellinger distances describe posterior distinguishability,
+  not a thresholded collapse criterion or an annealing control rule.
 
 No project-defined analytical beta phase-transition boundary is reported here.
 """
@@ -66,6 +68,134 @@ class LatentUsageMetricConfig:
     """Configuration namespace for literature-aligned latent-usage diagnostics."""
 
     collapse: PosteriorCollapseConfig = field(default_factory=PosteriorCollapseConfig)
+    hellinger_max_pairs: int = 10000
+    hellinger_seed: int = 31
+
+    def __post_init__(self) -> None:
+        if type(self.hellinger_max_pairs) is not int or self.hellinger_max_pairs < 1:
+            raise ValueError("hellinger_max_pairs must be a positive integer")
+        if type(self.hellinger_seed) is not int or not 0 <= self.hellinger_seed < 2**32:
+            raise ValueError("hellinger_seed must be an integer in [0, 2**32)")
+
+
+SQFA_COMMIT = "5d66578e9e4d497c58c6dbdd5af3b37789cfe04a"
+SQFA_VERSION = "0.2.1.dev23+g5d66578e9"
+HELLINGER_CONVENTION = "SQFA raw sqrt(1-exp(-D_B)+1e-6); identical posteriors: 0.001"
+
+
+def diagonal_gaussian_hellinger(mu_a, logvar_a, mu_b, logvar_b):
+    """Measure posterior overlap using SQFA's Gaussian Hellinger distance.
+
+    Applicable because our VAE posteriors are Gaussians with covariance
+    diag(exp(logvar)). Smaller distances mean greater overlap, not necessarily
+    posterior collapse. SQFA's epsilon makes identical posteriors score 0.001.
+    Source: https://github.com/dherrera1911/sqfa/tree/5d66578e9e4d497c58c6dbdd5af3b37789cfe04a
+    """
+    import torch
+    from importlib.metadata import version
+    from sqfa import distances as sqfa_distances
+
+    if version('sqfa') != SQFA_VERSION:
+        raise ValueError('SQFA version differs from the audited requirements pin')
+    if sqfa_distances.EPSILON != 1e-6:
+        raise ValueError('SQFA Hellinger epsilon differs from the audited convention')
+    a, va, b, vb = [np.asarray(v, dtype=np.float64) for v in
+                     (mu_a, logvar_a, mu_b, logvar_b)]
+    if (a.ndim != 2 or a.shape[1] == 0
+            or any(v.shape != a.shape for v in (va, b, vb))):
+        raise ValueError("Posterior parameters must have matching (pairs, dimensions) shapes")
+    if not all(np.isfinite(v).all() for v in (a, va, b, vb)):
+        raise ValueError("Posterior parameters must be finite")
+    with np.errstate(over='ignore', under='ignore'):
+        variance_a, variance_b = np.exp(va), np.exp(vb)
+    if any(not np.isfinite(v).all() or (v <= 0).any() for v in (variance_a, variance_b)):
+        raise ValueError('Posterior variances are not representable as finite positive float64 values')
+    result = np.empty(len(a), dtype=np.float64)
+    # SQFA compares all A/B combinations. Small blocks bound that temporary
+    # matrix; only diagonal entries correspond to our selected aligned pairs.
+    with torch.no_grad():
+        for start in range(0, len(a), 16):
+            stop = min(start + 16, len(a))
+            stats_a = dict(means=torch.from_numpy(a[start:stop]),
+                covariances=torch.diag_embed(torch.from_numpy(variance_a[start:stop])))
+            stats_b = dict(means=torch.from_numpy(b[start:stop]),
+                covariances=torch.diag_embed(torch.from_numpy(variance_b[start:stop])))
+            try:
+                matrix = sqfa_distances.hellinger(stats_a, stats_b)
+            except RuntimeError as exc:
+                raise ValueError(f'SQFA Hellinger failed: {exc}') from exc
+            block_size = stop - start
+            result[start:stop] = matrix.reshape(block_size, block_size).diagonal().cpu().numpy()
+    if not np.isfinite(result).all():
+        raise ValueError('SQFA returned nonfinite Hellinger distances; no clipping or fallback')
+    return result
+
+
+def compute_posterior_hellinger(mu, logvar, config, artifact_dir=None, sample_ids=None):
+    """Summarize uniformly selected distinct unordered posterior pairs.
+
+    Fixed seed selects the same row pairs across runs with the same ordered
+    cohort. All pairs are used when within budget; no n-by-n matrix is built.
+    Quantiles describe the selected pairs, not confidence intervals. Evaluate
+    on validation data separately before using this diagnostic for control.
+    """
+    values = np.asarray(mu, dtype=np.float64)
+    if values.ndim != 2 or min(values.shape) == 0:
+        raise ValueError("mu must be a non-empty matrix")
+    n = len(values)
+    names = ('mean', 'median', 'q10', 'q90')
+    status, warning = 'ok', HELLINGER_CONVENTION
+    summary = np.full(4, np.nan)
+    if logvar is None:
+        status, warning = 'missing_posterior', 'Posterior log-variances are unavailable'
+    elif n < 2:
+        status, warning = 'degenerate_input', 'Hellinger requires at least two samples'
+    else:
+        variances = np.asarray(logvar, dtype=np.float64)
+        if variances.shape != values.shape:
+            raise ValueError("mu and logvar must have matching shapes")
+        total = n * (n - 1) // 2
+        count = min(total, config.hellinger_max_pairs)
+        ranks = (np.arange(total) if count == total else np.sort(
+            np.random.default_rng(config.hellinger_seed).choice(total, count, replace=False)))
+        starts = np.arange(n, dtype=np.int64)
+        starts = starts * (2 * n - starts - 1) // 2
+        i = np.searchsorted(starts, ranks, side='right') - 1
+        j = i + 1 + ranks - starts[i]
+        try:
+            distances = diagonal_gaussian_hellinger(values[i], variances[i], values[j], variances[j])
+            if not np.isfinite(distances).all():
+                raise ValueError('Nonfinite analytic Hellinger distances')
+            summary = [np.mean(distances), np.median(distances),
+                       *np.quantile(distances, [.1, .9])]
+            if artifact_dir is not None:
+                import json
+                directory = Path(artifact_dir)
+                directory.mkdir(parents=True, exist_ok=True)
+                pairs = pd.DataFrame(dict(row_i=i, row_j=j, hellinger=distances))
+                if sample_ids is not None:
+                    ids = np.asarray(sample_ids)
+                    if ids.shape != (n,):
+                        raise ValueError('sample_ids must align with posterior rows')
+                    pairs['sample_id_i'], pairs['sample_id_j'] = ids[i], ids[j]
+                pairs.to_csv(directory / 'posterior_hellinger_pairs.csv', index=False)
+                (directory / 'posterior_hellinger_metadata.json').write_text(json.dumps(dict(
+                    seed=config.hellinger_seed, max_pairs=config.hellinger_max_pairs,
+                    n_pairs=count, total_pairs=total, latent_dimensions=values.shape[1],
+                    backend='sqfa.distances.hellinger', package_version=SQFA_VERSION,
+                    source_commit=SQFA_COMMIT, epsilon=1e-6, dtype='float64',
+                    convention=HELLINGER_CONVENTION, batch_size=16,
+                    pair_selection='uniform distinct unordered row pairs, without replacement',
+                ), indent=2) + '\n')
+        except ImportError as exc:
+            status, warning = 'missing_dependency', str(exc)
+            summary = np.full(4, np.nan)
+        except ValueError as exc:
+            status, warning = 'degenerate_input', str(exc)
+            summary = np.full(4, np.nan)
+    return pd.DataFrame([dict(metric_name='posterior_pairwise_hellinger_' + name,
+        value=float(value), status=status, warning=warning, n_samples=n, split='test')
+        for name, value in zip(names, summary)])
 
 
 def _epsilon_token(epsilon: float) -> str:
@@ -373,6 +503,8 @@ def run_latent_usage_metrics_pipeline(
           configured primary epsilon/delta (default 0.01/0.01).
 
     Sensitivity/confirmatory:
+        - Pairwise Hellinger mean/median/q10/q90 using posterior means/logvars;
+          missing logvars produce explicit unavailable values.
         - AUTOENCODIX latent coverage from sampled ``z_test``.
         - Alternative Active-Unit thresholds in the artifact only.
         - Alternative epsilon values in collapse-curve artifacts only.
@@ -387,6 +519,8 @@ def run_latent_usage_metrics_pipeline(
 
     frames: list[pd.DataFrame] = [
         compute_active_units(inputs.mu_test, inputs.run_name, artifact_dir),
+        compute_posterior_hellinger(inputs.mu_test, inputs.logvar_test, config,
+            artifact_dir, getattr(inputs, 'sample_ids_test', None)),
     ]
 
     if inputs.z_test is not None:
@@ -412,6 +546,8 @@ def run_latent_usage_metrics_pipeline(
 
 
 __all__ = [
+    "diagonal_gaussian_hellinger",
+    "compute_posterior_hellinger",
     "compute_active_units",
     "compute_autoencodix_latent_coverage",
     "compute_epsilon_delta_posterior_collapse",

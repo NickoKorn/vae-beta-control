@@ -10,7 +10,7 @@ Fragen und werden daher in zwei fachlichen Modulen getrennt.
 Bestehende öffentliche Imports bleiben erhalten.
 
 preservation.py: paired X/encoding Rips diagrams and preservation distances.
-latent_only.py: deskriptive Topologie einzelner Repräsentationen.
+latent_descriptor.py: deskriptive Topologie einzelner Repräsentationen.
 landscape.py: optional functional descriptors.
 """
 from .preservation import (

@@ -59,7 +59,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from ._diagrams import _finite_diagram
-from .latent_only import (summarize_persistence_diagrams, compute_persistence_entropy,
+from .latent_descriptor import (summarize_persistence_diagrams, compute_persistence_entropy,
                           compute_betti_curve_artifacts)
 from .landscape import LandscapeConfig, run_landscape_metrics, NORMALIZATION
 from gudhi import bottleneck_distance
@@ -291,11 +291,6 @@ def compute_persistence_diagrams_h0_h1(
             ),
         }
 
-
-
-
-
-
 def compute_normalized_wasserstein_h0_h1(
     diagrams: dict[str, np.ndarray],
     n_samples: int,
@@ -420,7 +415,7 @@ def _cached_input_diagrams(distances, ids, directory):
 def compute_distance_scale_diagnostics(
     input_distances: np.ndarray,
     latent_distances: np.ndarray,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """Record absolute scale that separate diameter normalization removes.
 
     Durchmesser/Median/q90 zeigen die im PH-Vergleich entfernte Skala und
@@ -444,9 +439,6 @@ def compute_distance_scale_diagnostics(
         "latent_distance_median": float(np.median(latent_values)),
         "latent_distance_q90": float(np.quantile(latent_values, 0.9)),
     }
-
-
-
 
 def compute_h0_signature_preservation(x, mu, output_dir=None):
     """Korrespondenzbasierte H0-Preservation nach Moor, nach dem Training.
