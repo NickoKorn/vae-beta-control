@@ -4,8 +4,6 @@ numpy==2.3.5
 pyarrow==23.0.1
 scikit-learn==1.6.1
 scikit-dimension==0.3.4
-# Gaussian posterior Hellinger; PyPI 0.2.0 lacks the audited distance API.
-sqfa @ git+https://github.com/dherrera1911/sqfa.git@5d66578e9e4d497c58c6dbdd5af3b37789cfe04a
 ripser==0.6.15
 persim==0.3.8
 gudhi==3.11.0

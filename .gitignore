@@ -22,6 +22,9 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Experiment-development scratch files and superseded implementations
+/beta_vae_experiments/test/
+/beta_vae_experiments/metrics/complementary/
+/beta_vae_experiments/result_analysis/
 /beta_vae_experiments/archive/
 /beta_vae_experiments/optional/
 /beta_vae_experiments/tests/
@@ -105,3 +108,6 @@ coverage.xml
 !/beta_vae_experiments/metrics/
 !/beta_vae_experiments/metrics/topology/
 !/beta_vae_experiments/metrics/topology/latent_descriptor.py
+
+# Reference only; Hellinger is not part of the active metric pipeline.
+!/beta_vae_experiments/metrics/hellinger.txt

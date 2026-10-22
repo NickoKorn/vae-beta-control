@@ -1,0 +1,3 @@
+Bibliotheksquelle fuer Hellinger-Distanz zwischen Gauss-Posterioren:
+sqfa.distances.hellinger(statistics_A, statistics_B)
+https://github.com/dherrera1911/sqfa/blob/5d66578e9e4d497c58c6dbdd5af3b37789cfe04a/src/sqfa/distances.py

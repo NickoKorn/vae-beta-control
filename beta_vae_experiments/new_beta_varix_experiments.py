@@ -58,7 +58,7 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXPERIMENT_DIR.parent
 JSON_DIR = EXPERIMENT_DIR / "user_interface"
 
-METRIC_SCHEMA_VERSION = "v27"
+METRIC_SCHEMA_VERSION = "v28"
 
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
