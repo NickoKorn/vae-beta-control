@@ -47,7 +47,6 @@ from .metrics.evaluation.sampled_z import DownstreamMetricConfig
 from .metrics.evaluation.reconstruction import run_reconstruction_metrics_pipeline
 from .metrics.evaluation.native_losses import run_native_loss_metrics_pipeline
 from .metrics.geometry import GeometryMetricConfig, run_geometry_metrics_pipeline
-from .metrics.complementary.curvature.encoder_geometry import EncoderGeometryConfig, run_encoder_geometry_metrics_pipeline
 from .metrics.information_theoretic import run_information_theoretic_metrics_pipeline
 from .metrics.latent_usage import (
     LatentUsageMetricConfig,
@@ -67,7 +66,6 @@ class AbsoluteCoreMetricConfig:
         default_factory=DimensionalityMetricConfig
     )
     geometry: GeometryMetricConfig = field(default_factory=GeometryMetricConfig)
-    encoder_geometry: EncoderGeometryConfig = field(default_factory=EncoderGeometryConfig)
     topology: TopologyMetricConfig = field(default_factory=TopologyMetricConfig)
 
 
@@ -182,15 +180,7 @@ def run_absolute_core_metrics_pipeline(
     )
     output_dir = Path(config.output_dir)
 
-    encoder_model = None
-    if config.encoder_geometry.enabled:
-        trainer = getattr(varix, '_trainer', None)
-        if trainer is not None:
-            encoder_model = trainer.get_model()
     frames = [
-        run_encoder_geometry_metrics_pipeline(
-            validated, selected_indices, x_selected, mu_selected,
-            config.encoder_geometry, output_dir, encoder_model),
         run_graph_metrics_pipeline(
             validated, selected_indices, x_selected, mu_selected,
             config.graph, config.geometry, output_dir,

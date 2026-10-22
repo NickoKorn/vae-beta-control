@@ -51,9 +51,7 @@
     "per_run": false
   },
   "metric_analysis": {
-    "enabled": true,
-    "rate_distortion": true,
-    "trajectory_plots": true
+    "enabled": false
   },
   "execution": {
     "resume_existing": true,

@@ -1,8 +1,4 @@
-"""Fixed, JSON-controlled beta cycles with long high/low plateaus.
-
-Uses the native AUTOENCODIX loss; only its annealing factor is supplied here.
-All settings refer to epochs. beta_low_over_d uses the existing mean-KL units.
-"""
+"""Linear beta warm-up using the native AUTOENCODIX loss extension point."""
 from dataclasses import dataclass
 import hashlib
 import json
@@ -10,56 +6,37 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class EpochBetaSchedule:
-    kind: str
-    low_fraction: float
-    initial_hold: int
-    cycles: int
-    ramp_up: int
-    high_hold: int
-    ramp_down: int
-    low_hold: int
+class LinearBetaWarmup:
+    """Start at beta=0, reach target at the last warm-up epoch, then hold.
+
+    Epochs are zero-based internally. With warmup_epochs=300, factors are
+    0 at index 0 and 1 at index 299; indices 300 onward retain factor 1.
+    This fixed schedule is not a feedback controller or a collapse guarantee.
+    """
+
+    epochs: int = 1000
+    warmup_epochs: int = 300
+    kind: str = 'linear_warmup'
 
     def __post_init__(self):
-        if self.kind not in {'constant_low', 'constant_high', 'step', 'linear', 'cosine'}:
-            raise ValueError(f'Unknown schedule {self.kind}')
-        if not np.isfinite(self.low_fraction) or not 0 <= self.low_fraction <= 1:
-            raise ValueError('Require 0 <= beta_low / beta_high <= 1')
-        for key in ['initial_hold', 'cycles', 'ramp_up', 'high_hold', 'ramp_down', 'low_hold']:
-            value = getattr(self, key)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f'{key} must be a nonnegative integer')
-        if self.cycles < 1 or self.ramp_up < 2 or self.ramp_down < 2 or self.high_hold < 1 or self.low_hold < 1:
-            raise ValueError('Require cycles >=1, ramps >=2, and nonempty plateaus')
-
-    @property
-    def epochs(self):
-        return self.initial_hold + self.cycles * (self.ramp_up + self.high_hold + self.ramp_down + self.low_hold)
+        if self.kind != 'linear_warmup':
+            raise ValueError('Only linear_warmup is supported')
+        if any(type(value) is not int for value in (self.epochs, self.warmup_epochs)):
+            raise ValueError('epochs and warmup_epochs must be integers')
+        if not 2 <= self.warmup_epochs <= self.epochs:
+            raise ValueError('Require 2 <= warmup_epochs <= epochs')
 
     def factors(self):
-        if self.kind.startswith('constant_'):
-            value = self.low_fraction if self.kind == 'constant_low' else 1.
-            return np.full(self.epochs, value)
-        up = np.linspace(0., 1., self.ramp_up)
-        down = np.linspace(1., 0., self.ramp_down)
-        if self.kind == 'cosine':
-            up, down = (1 - np.cos(np.pi * up)) / 2, (1 - np.cos(np.pi * down)) / 2
-        elif self.kind == 'step':
-            up, down = np.ones(self.ramp_up), np.zeros(self.ramp_down)
-        cycle = np.concatenate([up, np.ones(self.high_hold), down, np.zeros(self.low_hold)])
-        fractions = np.concatenate([np.zeros(self.initial_hold), np.tile(cycle, self.cycles)])
-        return self.low_fraction + (1 - self.low_fraction) * fractions
+        return np.minimum(np.arange(self.epochs) / (self.warmup_epochs - 1), 1.)
 
 
 def schedule_from_settings(settings, beta_high_over_d):
-    settings = dict(settings)
-    if set(settings) - {'kind', 'beta_low_over_d', 'initial_hold', 'cycles', 'ramp_up', 'high_hold', 'ramp_down', 'low_hold'}:
-        raise ValueError('Unknown beta_schedule keys')
-    low = float(settings.pop('beta_low_over_d'))
-    high = float(beta_high_over_d)
-    if not np.isfinite(high) or high <= 0 or not np.isfinite(low) or low < 0 or low > high:
-        raise ValueError('Require 0 <= beta_low_over_d <= beta_high_over_d and high > 0')
-    return EpochBetaSchedule(low_fraction=low / high, **settings)
+    if not np.isfinite(beta_high_over_d) or beta_high_over_d <= 0:
+        raise ValueError('Target beta_over_d must be finite and positive')
+    unknown = set(settings) - {'kind', 'epochs', 'warmup_epochs'}
+    if unknown:
+        raise ValueError(f'Unknown beta_schedule keys: {sorted(unknown)}')
+    return LinearBetaWarmup(**settings)
 
 
 def schedule_tag(settings):

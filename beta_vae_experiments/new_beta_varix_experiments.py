@@ -51,20 +51,20 @@ from beta_vae_experiments.metrics import (
     TopologyMetricConfig,
 )
 from beta_vae_experiments.metrics.visualizations import save_varix_result_plots
-from beta_vae_experiments.result_analysis.sweep_analysis import save_sweep_analysis
 from beta_vae_experiments.metrics.evaluation.downstream import TARGETS, ClassAUCEvaluator
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXPERIMENT_DIR.parent
 JSON_DIR = EXPERIMENT_DIR / "user_interface"
 
-METRIC_SCHEMA_VERSION = "v28"
+METRIC_SCHEMA_VERSION = "v29"
 
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
-    from beta_vae_experiments.metrics.complementary.curvature.encoder_geometry import EncoderGeometryConfig
     from beta_vae_experiments.metrics.evaluation.sampled_z import DownstreamMetricConfig
     metric_settings = settings["metrics"]
+    if metric_settings.get("encoder_geometry", {}).get("enabled", False):
+        raise ValueError("encoder_geometry was removed from the active pipeline")
     latent_usage_settings = metric_settings.get("latent_usage", {})
     graph_settings = dict(metric_settings.get("graph", {}))
     # Historical profiles may retain this now-complementary curvature switch.
@@ -75,7 +75,6 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
         graph=GraphMetricConfig(**graph_settings),
         dimensionality=DimensionalityMetricConfig(**metric_settings.get("dimensionality", {})),
         geometry=GeometryMetricConfig(**metric_settings.get("geometry", {})),
-        encoder_geometry=EncoderGeometryConfig(**metric_settings.get("encoder_geometry", {})),
         latent_usage=LatentUsageMetricConfig(
             **{
                 **latent_usage_settings,
@@ -315,8 +314,15 @@ def _save_overview(frame: pd.DataFrame, output_dir: Path) -> Path:
 
 
 def run_experiment(experiment_json: Path) -> pd.DataFrame:
-    """Run fixed-split training, per-run metrics, and final metric analysis."""
+    """Run fixed-split training, snapshots and the active per-run metrics."""
     settings = load_experiment_config(experiment_json)
+    if settings.get("metric_analysis", {}).get("enabled", False):
+        raise ValueError("metric_analysis was removed; disable it in the configuration")
+    snapshots = settings["training"].get("snapshots", {})
+    if snapshots.get("enabled") and snapshots.get("mode") != "all_train_valid":
+        raise ValueError("Unsupported snapshot mode")
+    if settings["metrics"]["absolute_core"]["enabled"]:
+        build_metric_config(settings)
     output_dir = settings["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_settings = settings["dataset"]
@@ -382,12 +388,6 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
                                   run_folder / "beta_schedule.csv", index=False)
             save_epoch_history(result, run_folder)
             save_final_posteriors(varix, result, run_folder)
-            if training.get("beta_schedule") and training.get("snapshots", {}).get("mode") == "all_train_valid":
-                from beta_vae_experiments.result_analysis.analyse_annealing_snapshots import analyse
-                analyse(run_folder, k_values=settings.get("recovery_analysis", {}).get("k_values", [5, 10, 20]),
-                        max_samples=int(settings.get("recovery_analysis", {}).get("observer_max_samples", 512)),
-                        targets=training.get("downstream_targets", []),
-                        rate_thresholds=settings.get("recovery_analysis", {}).get("rate_thresholds_nats_per_sample", [.001, .01, .1]))
 
             if settings["metrics"]["absolute_core"]["enabled"]:
                 row = analyse_varix_training(varix, result, run_name, run, settings)
@@ -441,9 +441,6 @@ def run_experiment(experiment_json: Path) -> pd.DataFrame:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    if settings.get("metric_analysis", {}).get("enabled") and not overview.empty:
-        analysis_dir = output_dir / "metric_analysis"
-        save_sweep_analysis(overview, analysis_dir)
     return overview
 
 
@@ -454,7 +451,18 @@ def preflight_experiment(experiment_json: Path) -> None:
     runs = build_training_runs(settings["experiment_name"], settings["training"])
     if not runs:
         raise ValueError("The JSON training grid creates no runs.")
-    build_data_config(PROJECT_ROOT, str(dataset["id"]), dataset.get("options"))
+    build_metric_config(settings)
+    if settings.get("metric_analysis", {}).get("enabled", False):
+        raise ValueError("metric_analysis was removed; disable it in the configuration")
+    snapshots = settings["training"].get("snapshots", {})
+    if snapshots.get("enabled") and snapshots.get("mode") != "all_train_valid":
+        raise ValueError("Unsupported snapshot mode")
+    data_config = build_data_config(PROJECT_ROOT, str(dataset["id"]), dataset.get("options"))
+    config = build_varix_config(data_config, str(dataset["id"]), settings["training"],
+                                runs[0], global_seed=runs[0]["seed"])
+    if settings["training"].get("beta_schedule"):
+        from beta_vae_experiments.beta_annealing import make_scheduled_loss
+        make_scheduled_loss(settings["training"]["beta_schedule"], config)
     print(
         f"Preflight passed: {settings['experiment_name']} "
         f"({dataset['id']}, {len(runs)} runs)"
@@ -480,7 +488,9 @@ def main() -> None:
     if arguments.preflight:
         preflight_experiment(arguments.experiment_json)
     else:
-        run_experiment(arguments.experiment_json)
+        overview = run_experiment(arguments.experiment_json)
+        if overview.empty or not overview["status"].eq("ok").all():
+            raise SystemExit("Experiment contains failed runs; see experiment_metrics.csv")
 
 
 if __name__ == "__main__":

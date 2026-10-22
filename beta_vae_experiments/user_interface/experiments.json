@@ -49,9 +49,7 @@
           "per_run": true
         },
         "metric_analysis": {
-          "enabled": true,
-          "rate_distortion": true,
-          "trajectory_plots": true
+          "enabled": false
         },
         "execution": {
           "resume_existing": true,
@@ -246,24 +244,27 @@
     "annealing": {
       "defaults": {},
       "profiles": {
-        "recovery": {
-          "schema_version": "fixed_beta_recovery_suite_v1",
-          "experiment_name": "annealing_recovery_2026_10_20",
-          "results_date": "2026-10-20",
-          "split_seeds": [2, 3, 5],
+        "warmup": {
+          "split_seeds": [
+            2,
+            3,
+            5
+          ],
           "device": "cuda",
-          "latent_dims": [4, 8, 16],
-          "seeds": [13, 17, 23, 31],
-          "learning_rates": [0.0005],
-          "schedule_kinds": ["constant_low", "constant_high", "step", "linear", "cosine"],
-          "schedule": {
-            "initial_hold": 100,
-            "cycles": 3,
-            "ramp_up": 60,
-            "high_hold": 90,
-            "ramp_down": 60,
-            "low_hold": 90
-          },
+          "latent_dims": [
+            4,
+            8,
+            16
+          ],
+          "seeds": [
+            13,
+            17,
+            23,
+            31
+          ],
+          "learning_rates": [
+            0.0005
+          ],
           "snapshots": {
             "enabled": true,
             "mode": "all_train_valid",
@@ -281,8 +282,10 @@
                 "methylation_file": "data_methylation_per_gene_formatted.parquet",
                 "clinical_file": "data_clinical_formatted.parquet"
               },
-              "beta_low_over_d": 5e-06,
-              "beta_high_over_d": [0.001, 0.015]
+              "beta_over_d": [
+                0.001,
+                0.015
+              ]
             },
             {
               "name": "circle",
@@ -292,8 +295,10 @@
                 "n_samples": 5000,
                 "dataset_seed": 42
               },
-              "beta_low_over_d": 1e-05,
-              "beta_high_over_d": [0.01, 1.0]
+              "beta_over_d": [
+                0.01,
+                1.0
+              ]
             },
             {
               "name": "sphere",
@@ -303,8 +308,10 @@
                 "n_samples": 5000,
                 "dataset_seed": 42
               },
-              "beta_low_over_d": 1e-05,
-              "beta_high_over_d": [0.01, 1.0]
+              "beta_over_d": [
+                0.01,
+                1.0
+              ]
             },
             {
               "name": "swiss_roll",
@@ -315,8 +322,10 @@
                 "dataset_seed": 42,
                 "noise": 0.0
               },
-              "beta_low_over_d": 1e-05,
-              "beta_high_over_d": [0.01, 1.0]
+              "beta_over_d": [
+                0.01,
+                1.0
+              ]
             },
             {
               "name": "swiss_roll_correlated",
@@ -329,8 +338,10 @@
                 "correlated_copies": 8,
                 "observation_noise": 0.02
               },
-              "beta_low_over_d": 1e-05,
-              "beta_high_over_d": [0.01, 1.0]
+              "beta_over_d": [
+                0.01,
+                1.0
+              ]
             },
             {
               "name": "swiss_roll_noisy_copies",
@@ -343,69 +354,43 @@
                 "correlated_copies": 8,
                 "observation_noise": 1.0
               },
-              "beta_low_over_d": 1e-05,
-              "beta_high_over_d": [0.01, 1.0]
+              "beta_over_d": [
+                0.01,
+                1.0
+              ]
             }
           ],
-          "analysis": {
-            "observer_metrics": [
-              "trustworthiness",
-              "continuity",
-              "lcmc",
-              "scale_normalized_stress",
-              "steadiness",
-              "cohesiveness",
-              "active_units",
-              "kl_total",
-              "effective_rank"
-            ],
-            "auc_targets": ["CANCER_TYPE_ACRONYM", "CANCER_TYPE", "SUBTYPE", "SEX", "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT"],
-            "control_uses_labels": false,
-            "recovery_comparison": "matched_epoch_constant_low_and_same_beta_before_after_excursion",
-            "held_out_confirmation": {
-              "split_seed": 7,
-              "synthetic_dataset_seed": 73
-            },
-            "selection_split": "valid",
-            "test_split": "final_confirmation_only",
-            "amplitudes_are_exploratory": true,
-            "collapse_primary_measure": "unweighted_total_KL_nats_per_sample",
-            "rate_thresholds_nats_per_sample": [0.001, 0.01, 0.1],
-            "rate_thresholds_are_exploratory": true,
-            "primary_goal": "characterise_and_avoid_posterior_collapse",
-            "downstream_role": "secondary_validation_of_structure_metrics",
-            "metric_feedback_controller_enabled": false,
-            "controller_prerequisites": [
-              "validate_metric_beta_response_on_fixed_schedule",
-              "validate_metric_auc_relationship_on_held_out_seeds",
-              "predefine_structure_tolerance",
-              "check_reconstruction_and_rate_matched_baselines"
-            ],
-            "k_values": [5, 10, 20]
-          },
-          "results_root": "/run/media/nickok/0961c9a3-502d-4e5a-8183-029cb115b657/vae-beta-control/results",
+          "results_root": "beta_vae_experiments",
           "plots": {
             "enabled": true,
             "per_run": true
           },
-          "require_results_mount": "/run/media/nickok/0961c9a3-502d-4e5a-8183-029cb115b657"
-        }
-      }
-    },
-    "analysis": {
-      "defaults": {},
-      "profiles": {
-        "encoder_geometry": {
-          "sweep": "beta_vae_experiments/new_results_2026-09-29/biology_breakpoints_2026_09_29",
-          "input_splits": "archive_06_10_26/results/biology_no_annealing_2026-09-28/biology/input_data/x_splits_split_seed2.npz",
-          "output_dir": "beta_vae_experiments/new_results_2026-10-15/encoder_geometry_analysis",
-          "geometry": {
-            "max_samples": 128,
-            "jacobian_samples": 8,
-            "k_values": [5, 10, 20],
-            "quadruples": 1024,
-            "random_state": 31,
-            "rank_rtol": 1e-07
+          "schema_version": "linear_beta_warmup_suite_v1",
+          "experiment_name": "annealing_warmup_2026_10_22",
+          "results_date": "2026-10-22",
+          "schedule": {
+            "kind": "linear_warmup",
+            "epochs": 1000,
+            "warmup_epochs": 300
+          },
+          "analysis": {
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "auc_targets": [
+              "CANCER_TYPE_ACRONYM",
+              "CANCER_TYPE",
+              "SUBTYPE",
+              "SEX",
+              "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT"
+            ],
+            "k_values": [
+              20
+            ],
+            "selection_split": "valid",
+            "target_betas_are_exploratory": true,
+            "metric_feedback_controller_enabled": false
           }
         }
       }

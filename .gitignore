@@ -111,3 +111,8 @@ coverage.xml
 
 # Reference only; Hellinger is not part of the active metric pipeline.
 !/beta_vae_experiments/metrics/hellinger.txt
+
+# Active single-annealer preparation and launch entry points.
+!/beta_vae_experiments/prepare_annealing.py
+!/beta_vae_experiments/bash_scripts/
+!/beta_vae_experiments/bash_scripts/run_annealing.sh
