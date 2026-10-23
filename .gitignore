@@ -102,6 +102,7 @@ coverage.xml
 # `git add -f <path>` after review; tracked files are unaffected by ignore rules.
 *
 !/.gitignore
+!/README.md
 
 # Renamed topology module required by the existing imports.
 !/beta_vae_experiments/
