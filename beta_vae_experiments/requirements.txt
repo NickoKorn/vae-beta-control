@@ -7,9 +7,6 @@ scikit-dimension==0.3.4
 ripser==0.6.15
 persim==0.3.8
 gudhi==3.11.0
-# Post-training H0 signature preservation; pin the tested library/backend.
-torch-topological==0.1.9
-giotto-ph==0.2.4
 zadu==0.4.2
 networkx==3.6.1
 igraph==1.0.0

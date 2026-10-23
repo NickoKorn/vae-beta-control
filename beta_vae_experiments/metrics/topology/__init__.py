@@ -15,8 +15,6 @@ landscape.py: optional functional descriptors.
 """
 from .preservation import (
     TopologyMetricConfig,
-    compute_h0_signature_preservation,
-    SIGNATURE_METRIC_NAME,
     validate_paired_dissimilarity_matrices,
     compute_persistence_diagrams_h0_h1,
     summarize_persistence_diagrams,

@@ -4,8 +4,8 @@ Preservation für die Masterarbeit:
 Wir vergleichen die metrische Struktur derselben Patienten im vorverarbeiteten
 Eingaberaum X und in den deterministischen Posterior-Mittelwerten mu.
 H0/H1-Diagrammabstände vergleichen topologische Signaturen ohne Punktidentität.
-Der symmetrische H0-Signature-Vergleich nach Moor ergänzt die Distanzen
-korrespondierender, durch die Persistenz ausgewählter MST-Kanten.
+Der H0-Signature-Vergleich nach Moor ist eine lokale Complementary-Analyse
+und wird von der aktiven Pipeline nicht ausgeführt.
 Diese Auswertung erfolgt nach dem Training und verändert den VAE-Loss nicht.
 Kleine Fehler bedeuten stärkere Erhaltung der jeweils gemessenen Struktur,
 belegen aber weder biologische Richtigkeit noch erhaltene Downstream-AUC.
@@ -92,8 +92,7 @@ ENTROPY_METRIC_NAMES = tuple(
     for dim in (0, 1) for space in ("x", "mu")
 )
 PERSISTENCE_METRIC_NAMES = WASSERSTEIN_METRIC_NAMES + BOTTLENECK_METRIC_NAMES
-SIGNATURE_METRIC_NAME = "topology_h0_signature_l2_normalized"
-TOPOLOGY_METRIC_NAMES = PERSISTENCE_METRIC_NAMES + (SIGNATURE_METRIC_NAME,)
+TOPOLOGY_METRIC_NAMES = PERSISTENCE_METRIC_NAMES
 
 # Pin even Ripser's current defaults: silent upstream-default changes must not
 # alter persistence diagrams between otherwise identical experiment runs.
@@ -426,65 +425,6 @@ def compute_distance_scale_diagnostics(
         "latent_distance_q90": float(np.quantile(latent_values, 0.9)),
     }
 
-def compute_h0_signature_preservation(x, mu, output_dir=None):
-    """Korrespondenzbasierte H0-Preservation nach Moor, nach dem Training.
-
-    Quellen: https://proceedings.mlr.press/v119/moor20a/moor20a.pdf ;
-    https://pytorch-topological.readthedocs.io/en/latest/nn.html#torch_topological.nn.SignatureLoss
-
-    Backend: torch-topological 0.1.9, SignatureLoss(p=2, normalise=True,
-    dimensions=0). Beide Richtungen werden addiert:
-        0.5 * ||D_X[E_X] - D_mu[E_X]||_2
-      + 0.5 * ||D_mu[E_mu] - D_X[E_mu]||_2.
-    D_X und D_mu werden jeweils durch ihren Durchmesser geteilt. E_X/E_mu
-    sind die endlichen H0-Todeskanten (MST). p=2 bezeichnet hier zugleich die
-    euklidische Punktmetrik und die L2-Aggregation der Kantenfehler.
-    Achtung: Die Bibliothek verwendet die L2-NORM, nicht deren Quadrat;
-    daher keine Behauptung numerischer Identität zum quadrierten Paper-Loss.
-    Keine Mittelung durch Kantenzahl: n bleibt ein Sensitivitätsparameter.
-    Unterschiedliche Featuredimensionen sind erlaubt, gleiche Patientenreihenfolge
-    ist erforderlich. Bei Distanzgleichständen kann die MST-Auswahl variieren;
-    wir verändern die Daten nicht durch Jitter. Endliche H0-Kanten werden
-    zur Nachvollziehbarkeit gespeichert. Niedriger ist stärkere Preservation,
-    keine Garantie erhaltener Klasseninformation oder optimaler beta-Wahl.
-    """
-    x, mu = np.asarray(x, dtype=np.float64), np.asarray(mu, dtype=np.float64)
-    n = len(x)
-    def unavailable(status, warning):
-        return pd.DataFrame(_undefined_values(status, warning, n, (SIGNATURE_METRIC_NAME,)))
-    if x.ndim != 2 or mu.ndim != 2 or len(mu) != n or n < 2:
-        raise ValueError("Signature comparison requires >=2 aligned rows in two matrices")
-    if not np.isfinite(x).all() or not np.isfinite(mu).all():
-        return unavailable("invalid_distances", "Signature inputs must be finite")
-    try:
-        import torch
-        from torch_topological.nn import VietorisRipsComplex, SignatureLoss
-    except ImportError as error:
-        return unavailable("missing_dependency", str(error))
-    try:
-        with torch.no_grad():
-            tx, tm = torch.as_tensor(x), torch.as_tensor(mu)
-            # Zero-diameter guards are numerical, not scientific collapse thresholds.
-            if torch.cdist(tx, tx).max() <= 1e-12 or torch.cdist(tm, tm).max() <= 1e-12:
-                return unavailable("zero_diameter", "Signature normalization requires nonzero diameters")
-            ph = VietorisRipsComplex(dim=0, p=2, threshold=float("inf"),
-                keep_infinite_features=False, coeff=2, n_threads=1)
-            px, pm = ph(tx), ph(tm)
-            score = float(SignatureLoss(p=2, normalise=True, dimensions=0)(
-                (tx, px), (tm, pm)).item())
-        if not np.isfinite(score):
-            return unavailable("numerical_error", "Nonfinite signature score")
-        if output_dir is not None:
-            directory = Path(output_dir)
-            directory.mkdir(parents=True, exist_ok=True)
-            np.save(directory / "signature_h0_input_pairings.npy", px[0].pairing)
-            np.save(directory / "signature_h0_latent_pairings.npy", pm[0].pairing)
-        return pd.DataFrame([dict(metric_name=SIGNATURE_METRIC_NAME, value=score,
-            status="ok", warning=None, n_samples=n, split="test")])
-    except Exception as error:
-        # A failed additional backend must not discard valid diagram distances.
-        return unavailable("computation_error", f"{type(error).__name__}: {error}")
-
 
 def run_topology_metrics_pipeline(
     inputs: CoreMetricInputs,
@@ -496,7 +436,7 @@ def run_topology_metrics_pipeline(
 ) -> pd.DataFrame:
     """Compare aligned X/mean geometry; preserve scale facts even at collapse.
 
-    Primary outputs are four diagram distances and one H0 signature error. Entropy, Betti curves and
+    Primary outputs are four diagram distances. Entropy, Betti curves and
     optional landscapes are separate diagnostics, never primary predictors.
     Separate diameter normalization measures relative shape, not contraction.
     Sources and reasons for each parameter are beside RIPSER_CONFIG above.
@@ -525,14 +465,10 @@ def run_topology_metrics_pipeline(
         n_samples=n_samples, normalization=NORMALIZATION,
         sample_alignment="checked against parent X and mu arrays",
         ripser_config={**RIPSER_CONFIG, "thresh": "inf"},
-        package_versions={name: _dependency_version(name) for name in ("ripser", "persim", "gudhi", "torch", "torch-topological", "giotto-ph")},
+        package_versions={name: _dependency_version(name) for name in ("ripser", "persim", "gudhi")},
         infinity_policy="Retain essential bars in raw diagrams; compare finite bars",
         wasserstein_convention=dict(backend="persim.wasserstein", order=1, ground_metric="L2"),
         bottleneck_convention=dict(backend="gudhi.bottleneck_distance", e=0.0, ground_metric="L-infinity"),
-        signature_convention=dict(backend="torch_topological.nn.SignatureLoss",
-            p=2, normalise=True, dimensions=0, aggregation="sum of two half L2 norms",
-            ph_backend="VietorisRipsComplex", coeff=2, n_threads=1,
-            keep_infinite_features=False),
         config=vars(config), diagnostic_failures=[])
 
     def save_facts():
@@ -575,8 +511,7 @@ def run_topology_metrics_pipeline(
     # Export main results before optional diagnostics: their failure must never
     # discard valid diagrams/distances. Missing dependencies have separate status.
     results = pd.concat([compute_normalized_wasserstein_h0_h1(diagrams, n_samples),
-                         compute_normalized_bottleneck_h0_h1(diagrams, n_samples),
-                         compute_h0_signature_preservation(x, mu, directory)], ignore_index=True)
+                         compute_normalized_bottleneck_h0_h1(diagrams, n_samples)], ignore_index=True)
     provenance["status"] = "ok" if results.status.eq("ok").all() else "partial"
     save_facts()
     if directory is not None:

@@ -116,3 +116,6 @@ coverage.xml
 !/beta_vae_experiments/prepare_json_for_training.py
 !/beta_vae_experiments/bash_scripts/
 !/beta_vae_experiments/bash_scripts/run_annealing.sh
+
+# Local complementary methods are excluded from the active repository.
+/beta_vae_experiments/metrics/complementary/
