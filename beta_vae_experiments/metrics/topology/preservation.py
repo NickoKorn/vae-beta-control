@@ -343,21 +343,7 @@ def compute_normalized_bottleneck_h0_h1(
 ) -> pd.DataFrame:
     """GUDHI bottleneck on cached diameter-normalized finite diagram points.
 
-    Input representation: cached finite diagrams of separately normalized X/mu.
-
-    GUDHI ordnet die Punkte beider Persistenzdiagramme so zu, dass der größte
-    Einzelabstand möglichst klein wird. Als Einzelabstand zählt die größere
-    Abweichung von Geburt oder Tod eines Merkmals (L-infinity-Abstand).
-    Ein Merkmal darf auch der Diagonalen zugeordnet werden; das beschreibt
-    sein Verschwinden oder Entstehen. e=0.0 fordert die exakte Berechnung an,
-    statt eine zusätzliche Näherungstoleranz festzulegen; das kann länger dauern.
     https://gudhi.inria.fr/python/3.11.0/bottleneck_distance_user.html
-
-    Kontrollfall: Ein Balken (b,d) gegen leer kostet (d-b)/2. Der Vergleich zu
-    Persim verändert daher Aggregation UND Ground-Metrik, nicht nur Summe/Maximum.
-    Essentielle H0-Balken bleiben im Rohdiagramm, werden hier aber entfernt;
-    GUDHI selbst könnte unendliche Punkte behandeln. Identische (0,infinity)
-    auf beiden Seiten tragen bei passendem Matching keine Kosten bei.
     """
     rows = []
     for dimension, name in enumerate(BOTTLENECK_METRIC_NAMES):

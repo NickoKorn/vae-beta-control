@@ -48,15 +48,34 @@ def compare_landscapes(pd_x, pd_mu, config=LandscapeConfig()):
 
     Reuse the core finite-row policy; never cap essential bars or refit per space.
 
-    Gemeinsamer Fit verhindert verschiedene X-/μ-Raster innerhalb eines Paars.
-    Der Bereich wird aber je Aufruf neu bestimmt: Raster verschiedener Runs
-    sind nicht automatisch vergleichbar. Die berechnete euklidische Vektornorm
-    ist KEIN kontinuierliches Landscape-L2-Integral (Rasterweite fehlt); GUDHIs
-    sqrt(2)-Skalierung bleibt erhalten. Auflösungsänderungen ändern diese Norm.
-    Leere Funktionsrepräsentationen sind mathematisch Nullfunktionen; wenn der
-    datenabhängige Bibliotheksfit beider leerer Diagramme keinen endlichen
-    Bereich liefert, kennzeichnen wir den derzeitigen Output als undefiniert.
-    Das ist eine Implementierungskonvention, keine undefinierte PH selbst.
+    A joint fit prevents different X/μ grids within one pair. The range is,
+    however, re-determined on every call: grids of different runs are not
+    automatically comparable. The computed Euclidean vector norm is NOT a
+    continuous landscape L2 integral (the grid spacing is missing); GUDHI's
+    sqrt(2) scaling is retained. Changing the resolution changes this norm.
+    Empty functional representations are mathematically zero functions; if
+    the library's data-dependent fit of two empty diagrams yields no finite
+    range, we flag the current output as undefined. This is an implementation
+    convention, not undefined PH itself.
+
+    Parameters:
+        pd_x, pd_mu: Persistence diagram of one homology dimension for X and μ,
+            each ONE array of shape (n, 2). Every row is a bar [birth, death];
+            the rows are not separate arrays but views on the same memory.
+            Essential bars are stored as death=inf.
+            Ripser already returns empty diagrams as (0, 2).
+            reshape(-1, 2) re-reads the values row-wise in pairs of two. It
+            never truncates (incompatible element count -> ValueError), but it
+            silently rearranges any even element count: a (2, 3) diagram
+            [birth, death, dim] (giotto format) would become wrong (3, 2) bars.
+            It only serves to bring an empty list [] with shape (0,) to (0, 2).
+            For our Ripser diagrams it has no effect.
+        config: Number of landscape levels and grid resolution, see LandscapeConfig.
+
+    Returns:
+        (value, vectors, metadata): Euclidean norm of the X-μ vector difference
+        (NaN for degenerate input), the two GUDHI vectors of shape
+        (2, num_landscapes*resolution), and provenance metadata.
     """
     started = time.perf_counter()
     originals = [np.asarray(p, dtype=float).reshape(-1, 2) for p in (pd_x, pd_mu)]
