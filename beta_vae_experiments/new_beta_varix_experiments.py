@@ -29,7 +29,8 @@ from beta_vae_experiments.metric_pipeline import (
 )
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig
 from beta_vae_experiments.metrics.dimensionality import DimensionalityMetricConfig
-from beta_vae_experiments.metrics.geometry import GeometryMetricConfig
+from beta_vae_experiments.metrics.preservation import GeometryMetricConfig
+from beta_vae_experiments.metrics.graph.neighbor_mixing_pipeline import NeighborMixingConfig
 from beta_vae_experiments.metrics.latent_usage import LatentUsageMetricConfig, PosteriorCollapseConfig
 from beta_vae_experiments.data_pipeline import (
     build_core_metric_inputs,
@@ -67,7 +68,10 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
         downstream=DownstreamMetricConfig(**metric_settings.get("downstream", {})),
         graph=GraphMetricConfig(**graph_settings),
         dimensionality=DimensionalityMetricConfig(**metric_settings.get("dimensionality", {})),
-        geometry=GeometryMetricConfig(**metric_settings.get("geometry", {})),
+        geometry=GeometryMetricConfig(**{**metric_settings.get("geometry", {}),
+            "core_only": metric_settings.get("preservation_only", False)}),
+        neighbor_mixing=NeighborMixingConfig(**metric_settings.get("neighbor_mixing", {})),
+        preservation_only=metric_settings.get("preservation_only", False),
         latent_usage=LatentUsageMetricConfig(
             **{
                 **latent_usage_settings,
@@ -108,7 +112,7 @@ def load_experiment_config(experiment_json: Path) -> dict[str, Any]:
     settings, config_directory = read_config(experiment_json)
     if settings.get("require_results_mount") and not Path(settings["require_results_mount"]).is_mount():
         raise FileNotFoundError("Required results drive is not mounted")
-    if "results_date" in settings:
+    if "results_date" in settings and not settings.get("output_dir"):
         import datetime
         date = datetime.date.fromisoformat(settings["results_date"]).isoformat()
         name = settings["experiment_name"]

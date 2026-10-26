@@ -129,7 +129,7 @@ export PYTHONHASHSEED=2
 
 `--preflight` validates configuration and paths without training. The second
 command trains one circle VAE for three epochs and computes its metrics. Results
-are written to `beta_vae_experiments/outputs/quickstart_circle/`.
+are written to `beta_vae_experiments/outputs/quickstart_circle_3d/`.
 
 For notebooks:
 
@@ -195,11 +195,11 @@ to this directory. Do not copy absolute paths from another machine.
 ## Prepare and run the large annealing grid
 
 This is separate from the small quickstart. The current suite prepares 18 JSON
-files for 432 runs, each with 1000 epochs and a 300-epoch linear beta warm-up.
+files for 384 runs, each with 1000 epochs and a 300-epoch linear beta warm-up.
 Preparing files does not start training:
 
 ```bash
-.venv/bin/python -m beta_vae_experiments.prepare_json_for_training --output-dir experiments/annealing_run
+.venv/bin/python -m beta_vae_experiments.prepare_json_for_training --output-dir beta_vae_experiments/large_scale_results
 ```
 
 Choose a fresh output directory when preparing another grid; the generator
@@ -209,8 +209,8 @@ refuses to overwrite existing JSON configurations. Its suite definition is
 On Linux/WSL2, check GPU availability, fetch TCGA, then use the suite launcher:
 
 ```bash
-bash beta_vae_experiments/bash_scripts/run_annealing.sh --preflight experiments/annealing_run/configs
-bash beta_vae_experiments/bash_scripts/run_annealing.sh --run experiments/annealing_run/configs
+bash beta_vae_experiments/bash_scripts/run_annealing.sh --preflight beta_vae_experiments/large_scale_results/configs
+bash beta_vae_experiments/bash_scripts/run_annealing.sh --run beta_vae_experiments/large_scale_results/configs
 ```
 
 The launcher requires CUDA and validates every configuration before training.
@@ -255,3 +255,13 @@ installing a newer standalone CUDA Toolkit does not change the PyTorch build.
 
 Experiments, downloaded data, caches and local `metrics/complementary/` methods
 are intentionally excluded from Git.
+
+### Current large-scale metric scope
+
+The `preservation_only` setting selects Trustworthiness, Continuity, Steadiness,
+Cohesiveness and scale-normalized Stress, plus rate and collapse diagnostics.
+Graph descriptors, topology, total correlation and dimensionality are deferred.
+Neighbor mixing is a separate graph diagnostic with 50 posterior draws. Its
+current cancer/sex grouping uses clinical labels; it is not a label-free controller.
+Downstream probes use z only, including epoch snapshots. Final repeated-z AUC
+uses the median of 10 evaluations. Snapshots are saved every 50 epochs.

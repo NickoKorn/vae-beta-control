@@ -44,6 +44,7 @@ class GeometryMetricConfig:
     In ZADU 0.4.2 ignoriert SNC das übergebene k und verwendet floor(sqrt(n)).
     """
 
+    core_only: bool = False
     distance_metric: str = "euclidean"
     selected_k: int = 20
     max_samples: int = 3000
@@ -174,6 +175,7 @@ def compute_zadu_geometry(
     sample_ids: np.ndarray | None = None,
     *,
     random_state: int = 31,
+    core_only: bool = False,
 ) -> ZADUGeometryResult:
     """Compute official measures through independent fail-isolated ZADU objects.
 
@@ -288,6 +290,8 @@ def compute_zadu_geometry(
     invalid32 = any(not f["float32_finite"] for f in space_facts.values())
     invalid_distances = any(not np.isfinite(f["diameter"]) for f in space_facts.values())
     for index, specification in enumerate(specifications):
+        if core_only and index not in (0, 7, 11):
+            continue
         # Upstream neighbor helpers discard the first result, assuming it is
         # self. Duplicate coordinates invalidate this assumption. Retain all
         # rows but withhold affected scores instead of reporting arbitrary ranks.
@@ -346,6 +350,8 @@ def compute_zadu_geometry(
     kl_0p01, kl_0p1, kl_1p0, snc, topo, dtm = tail
 
     def value(mapping: dict[str, object], key: str) -> float:
+        if core_only and not mapping:
+            return float("nan")
         try:
             result = float(mapping[key])
         except (KeyError, TypeError, ValueError) as error:
@@ -379,7 +385,10 @@ def compute_zadu_geometry(
             "topographic_product": value(topo, "topographic_product"),
             "distance_to_measure_sigma_0p1": value(dtm, "distance_to_measure"),
         }
-    metadata = dict(geometry_schema_version=2, snc_effective_k=int(np.sqrt(n_samples)), snc_requested_k=k,
+    if core_only:
+        metrics = {name: metrics[name] for name in ("trustworthiness", "continuity",
+            "steadiness", "cohesiveness", "scale_normalized_stress")}
+    metadata = dict(core_only=core_only, geometry_schema_version=2, snc_effective_k=int(np.sqrt(n_samples)), snc_requested_k=k,
         snc_seed=random_state, snc_k_is_ignored_by_backend=True,
         specifications=specifications, distance_metric="euclidean", geodesic=False,
         n_samples=n_samples, spaces=space_facts,
@@ -416,25 +425,26 @@ def _metric_values(
     """Map one typed ZADU result to stable, representation-explicit columns."""
     prefix = f"geometry_{representation}"
     metrics = result.global_metrics
-    named_values = (
-        (f"{prefix}_trustworthiness_zadu_k{k}", metrics["trustworthiness"]),
-        (f"{prefix}_continuity_zadu_k{k}", metrics["continuity"]),
-        (f"{prefix}_lcmc_zadu_k{k}", metrics["lcmc"]),
-        (f"{prefix}_mrre_false_zadu_k{k}", metrics["mrre_false"]),
-        (f"{prefix}_mrre_missing_zadu_k{k}", metrics["mrre_missing"]),
-        (f"{prefix}_neighbor_dissimilarity_zadu_k{k}", metrics["neighbor_dissimilarity"]),
-        (f"{prefix}_procrustes_zadu_k{k}", metrics["procrustes"]),
-        (f"{prefix}_spearman_rho_zadu", metrics["spearman_rho"]),
-        (f"{prefix}_non_metric_stress_zadu", metrics["non_metric_stress"]),
-        (f"{prefix}_scale_normalized_stress_zadu", metrics["scale_normalized_stress"]),
-        (f"{prefix}_kl_divergence_zadu_sigma_0p01", metrics["kl_divergence_sigma_0p01"]),
-        (f"{prefix}_kl_divergence_zadu_sigma_0p1", metrics["kl_divergence_sigma_0p1"]),
-        (f"{prefix}_kl_divergence_zadu_sigma_1p0", metrics["kl_divergence_sigma_1p0"]),
-        (f"{prefix}_steadiness_zadu_k{k}", metrics["steadiness"]),
-        (f"{prefix}_cohesiveness_zadu_k{k}", metrics["cohesiveness"]),
-        (f"{prefix}_topographic_product_zadu_k{k}", metrics["topographic_product"]),
-        (f"{prefix}_distance_to_measure_zadu_sigma_0p1", metrics["distance_to_measure_sigma_0p1"]),
-    )
+    metric_names = {
+        "trustworthiness": f"{prefix}_trustworthiness_zadu_k{k}",
+        "continuity": f"{prefix}_continuity_zadu_k{k}",
+        "lcmc": f"{prefix}_lcmc_zadu_k{k}",
+        "mrre_false": f"{prefix}_mrre_false_zadu_k{k}",
+        "mrre_missing": f"{prefix}_mrre_missing_zadu_k{k}",
+        "neighbor_dissimilarity": f"{prefix}_neighbor_dissimilarity_zadu_k{k}",
+        "procrustes": f"{prefix}_procrustes_zadu_k{k}",
+        "spearman_rho": f"{prefix}_spearman_rho_zadu",
+        "non_metric_stress": f"{prefix}_non_metric_stress_zadu",
+        "scale_normalized_stress": f"{prefix}_scale_normalized_stress_zadu",
+        "kl_divergence_sigma_0p01": f"{prefix}_kl_divergence_zadu_sigma_0p01",
+        "kl_divergence_sigma_0p1": f"{prefix}_kl_divergence_zadu_sigma_0p1",
+        "kl_divergence_sigma_1p0": f"{prefix}_kl_divergence_zadu_sigma_1p0",
+        "steadiness": f"{prefix}_steadiness_zadu_k{k}",
+        "cohesiveness": f"{prefix}_cohesiveness_zadu_k{k}",
+        "topographic_product": f"{prefix}_topographic_product_zadu_k{k}",
+        "distance_to_measure_sigma_0p1": f"{prefix}_distance_to_measure_zadu_sigma_0p1",
+    }
+    named_values = [(metric_names[key], value) for key, value in metrics.items()]
     values = []
     for name, raw_value in named_values:
         is_finite = bool(np.isfinite(raw_value))
@@ -549,6 +559,7 @@ def run_geometry_metrics_pipeline(
         selected_k,
         sample_ids=selected_ids,
         random_state=config.random_state,
+        core_only=config.core_only,
     )
     values.extend(
         _metric_values(

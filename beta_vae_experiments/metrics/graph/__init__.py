@@ -1,4 +1,5 @@
-"""Offline preservation of independently constructed kNN graph-geodesic rankings."""
+"""kNN graph-geodesic preservation and directed-neighbor group mixing."""
+from .neighbor_mixing import foreign_neighbor_fraction
 import numpy as np
 from sklearn.neighbors import kneighbors_graph
 from scipy.sparse import csr_matrix

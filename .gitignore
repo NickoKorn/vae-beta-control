@@ -110,6 +110,16 @@ coverage.xml
 !/beta_vae_experiments/metrics/topology/
 !/beta_vae_experiments/metrics/topology/latent_descriptor.py
 
+# Renamed preservation package required by the metric pipeline.
+!/beta_vae_experiments/metrics/preservation/
+!/beta_vae_experiments/metrics/preservation/__init__.py
+
+
+# Small preservation/overlap experiment; generated results stay local.
+!/beta_vae_experiments/user_interface/
+!/beta_vae_experiments/user_interface/preservation_overlap.json
+/beta_vae_experiments/preservation_overlap_results/
+
 # Reference only; Hellinger is not part of the active metric pipeline.
 !/beta_vae_experiments/metrics/hellinger.txt
 
@@ -120,3 +130,14 @@ coverage.xml
 
 # Local complementary methods are excluded from the active repository.
 /beta_vae_experiments/metrics/complementary/
+
+# kNN foreign-group mixing implementation.
+!/beta_vae_experiments/metrics/graph/
+!/beta_vae_experiments/metrics/graph/neighbor_mixing.py
+
+# Active kNN mixing runner.
+!/beta_vae_experiments/metrics/graph/neighbor_mixing_pipeline.py
+
+# Large-scale results and generated configurations stay local.
+/beta_vae_experiments/large_scale_results/
+/beta_vae_experiments/analysis_results/

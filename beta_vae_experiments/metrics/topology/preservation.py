@@ -63,6 +63,7 @@ from .latent_descriptor import (summarize_persistence_diagrams, compute_persiste
                           compute_betti_curve_artifacts)
 from .landscape import LandscapeConfig, run_landscape_metrics, NORMALIZATION
 from gudhi import bottleneck_distance
+from gudhi.wasserstein import wasserstein_distance
 from sklearn.metrics import pairwise_distances
 from typing import TYPE_CHECKING
 
@@ -83,6 +84,10 @@ WASSERSTEIN_METRIC_NAMES = (
     "topology_h0_normalized_wasserstein",
     "topology_h1_normalized_wasserstein",
 )
+WASSERSTEIN_W2_METRIC_NAMES = (
+    "topology_h0_normalized_wasserstein_w2",
+    "topology_h1_normalized_wasserstein_w2",
+)
 BOTTLENECK_METRIC_NAMES = (
     "topology_h0_normalized_bottleneck",
     "topology_h1_normalized_bottleneck",
@@ -91,7 +96,7 @@ ENTROPY_METRIC_NAMES = tuple(
     f"topology_h{dim}_persistence_entropy_{space}"
     for dim in (0, 1) for space in ("x", "mu")
 )
-PERSISTENCE_METRIC_NAMES = WASSERSTEIN_METRIC_NAMES + BOTTLENECK_METRIC_NAMES
+PERSISTENCE_METRIC_NAMES = WASSERSTEIN_METRIC_NAMES + WASSERSTEIN_W2_METRIC_NAMES + BOTTLENECK_METRIC_NAMES
 TOPOLOGY_METRIC_NAMES = PERSISTENCE_METRIC_NAMES
 
 # Pin even Ripser's current defaults: silent upstream-default changes must not
@@ -337,6 +342,29 @@ def compute_normalized_wasserstein_h0_h1(
     return pd.DataFrame.from_records(values)
 
 
+def compute_normalized_wasserstein_w2_h0_h1(
+    diagrams: dict[str, np.ndarray], n_samples: int,
+) -> pd.DataFrame:
+    """Compare finite normalized diagrams using W2 with Euclidean ground costs.
+
+    This matches diagram points (including diagonal matches), not patients or
+    Gaussian posteriors. Uses the same cached diagrams as W1 and bottleneck.
+    https://gudhi.inria.fr/python/3.12.0/wasserstein_distance_user.html
+    """
+    rows = []
+    for dimension, name in enumerate(WASSERSTEIN_W2_METRIC_NAMES):
+        dx = _finite_diagram(diagrams[f"topology_input_h{dimension}_persistence_diagram"])
+        dm = _finite_diagram(diagrams[f"topology_latent_h{dimension}_persistence_diagram"])
+        value = float(wasserstein_distance(
+            dx, dm, order=2, internal_p=2, keep_essential_parts=False,
+        ))
+        if not np.isfinite(value):
+            raise ValueError("Non-finite diagram W2 distance")
+        rows.append(dict(metric_name=name, value=value, status="ok", warning=None,
+                         n_samples=n_samples, split="test"))
+    return pd.DataFrame.from_records(rows)
+
+
 def compute_normalized_bottleneck_h0_h1(
     diagrams: dict[str, np.ndarray], n_samples: int,
 ) -> pd.DataFrame:
@@ -436,7 +464,7 @@ def run_topology_metrics_pipeline(
 ) -> pd.DataFrame:
     """Compare aligned X/mean geometry; preserve scale facts even at collapse.
 
-    Primary outputs are four diagram distances. Entropy, Betti curves and
+    Primary outputs are six diagram distances. Entropy, Betti curves and
     optional landscapes are separate diagnostics, never primary predictors.
     Separate diameter normalization measures relative shape, not contraction.
     Sources and reasons for each parameter are beside RIPSER_CONFIG above.
@@ -468,6 +496,8 @@ def run_topology_metrics_pipeline(
         package_versions={name: _dependency_version(name) for name in ("ripser", "persim", "gudhi")},
         infinity_policy="Retain essential bars in raw diagrams; compare finite bars",
         wasserstein_convention=dict(backend="persim.wasserstein", order=1, ground_metric="L2"),
+        wasserstein_w2_convention=dict(backend="gudhi.wasserstein.wasserstein_distance",
+            order=2, ground_metric="L2", keep_essential_parts=False),
         bottleneck_convention=dict(backend="gudhi.bottleneck_distance", e=0.0, ground_metric="L-infinity"),
         config=vars(config), diagnostic_failures=[])
 
@@ -511,6 +541,7 @@ def run_topology_metrics_pipeline(
     # Export main results before optional diagnostics: their failure must never
     # discard valid diagrams/distances. Missing dependencies have separate status.
     results = pd.concat([compute_normalized_wasserstein_h0_h1(diagrams, n_samples),
+                         compute_normalized_wasserstein_w2_h0_h1(diagrams, n_samples),
                          compute_normalized_bottleneck_h0_h1(diagrams, n_samples)], ignore_index=True)
     provenance["status"] = "ok" if results.status.eq("ok").all() else "partial"
     save_facts()

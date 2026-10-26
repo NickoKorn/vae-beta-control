@@ -27,6 +27,7 @@ def prepare(suite_reference, output_dir):
     rows = []
     project = Path(__file__).resolve().parent.parent
     for dataset in suite['datasets']:
+        latent_dims = dataset.get('latent_dims', suite['latent_dims'])
         schedule = schedule_from_settings(suite['schedule'], max(dataset['beta_over_d']))
         for split_seed in seeds:
             name = f"{suite['experiment_name']}_{dataset['name']}_split{split_seed}"
@@ -41,18 +42,23 @@ def prepare(suite_reference, output_dir):
                 output_dir=str(directory / name),
                 dataset=dict(id=dataset['id'], split_seed=split_seed, options=options),
                 training=dict(beta_over_d=dataset['beta_over_d'], learning_rates=suite['learning_rates'],
-                    latent_dims=suite['latent_dims'], seeds=suite['seeds'], epochs=schedule.epochs,
+                    latent_dims=latent_dims, seeds=suite['seeds'], epochs=schedule.epochs,
                     losses=['kl'], loss_reductions=['mean'], device=suite['device'],
                     checkpoint_interval=suite['snapshots'].get('every', 50), anneal_function='3phase-linear',
                     beta_schedule=suite['schedule'], snapshots=suite['snapshots'],
                     downstream_targets=suite['analysis']['auc_targets'] if dataset['id'] == 'tcga' else []),
-                metrics=dict(absolute_core=dict(enabled=True), topology=dict(max_samples=1000),
-                             graph=dict(k_values=suite['analysis']['k_values'])),
+                metrics=dict(preservation_only=suite.get('preservation_only', False),
+                             absolute_core=dict(enabled=True), topology=dict(max_samples=1000),
+                             graph=dict(k_values=suite['analysis']['k_values']),
+                             downstream=dict(n_draws=10, sampling_seed=31),
+                             neighbor_mixing=dict(n_draws=50, n_neighbors=20, seed=31,
+                                 group_columns=['CANCER_TYPE_ACRONYM', 'SEX'] if dataset['id'] == 'tcga' else [],
+                                 sex_mixed_cancers_only=True)),
                 plots=suite['plots'], metric_analysis=dict(enabled=False),
                 execution=dict(resume_existing=True, rerun_passed=False),
             )
             (configs / f'{name}.json').write_text(json.dumps(config, indent=2) + '\n')
-            runs = (len(dataset['beta_over_d']) * len(suite['latent_dims'])
+            runs = (len(dataset['beta_over_d']) * len(latent_dims)
                     * len(suite['seeds']) * len(suite['learning_rates']))
             rows.append(dict(dataset=dataset['name'], split_seed=split_seed, runs=runs,
                              epochs=schedule.epochs, warmup_epochs=schedule.warmup_epochs,
@@ -69,7 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('suite', nargs='?', default=str(CATALOG) + '#annealing.warmup')
     parser.add_argument('--output-dir', type=Path,
-                        default=Path(__file__).resolve().parent / 'new_results_2026-10-22' / 'annealing_observed_design')
+                        default=Path(__file__).resolve().parent / 'large_scale_results')
     args = parser.parse_args()
     inventory = prepare(args.suite, args.output_dir)
     print(inventory.to_string(index=False))

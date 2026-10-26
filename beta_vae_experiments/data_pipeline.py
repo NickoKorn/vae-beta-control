@@ -234,6 +234,7 @@ def build_core_metric_inputs(
         sample_ids_val=valid["sample_ids"],
         sample_ids_test=test["sample_ids"],
         sample_metadata_test=test.get("sample_metadata"),
+        sample_metadata_train=train.get("sample_metadata"),
         metadata=metadata,
     )
 

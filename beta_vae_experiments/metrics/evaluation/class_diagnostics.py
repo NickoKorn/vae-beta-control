@@ -4,8 +4,6 @@ Keine unüberwachten Controller-Features und keine Testsatz-Modellauswahl.
 Silhouette: Rousseeuw (1987), https://doi.org/10.1016/0377-0427(87)90125-7.
 Konfusionsmatrix: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.confusion_matrix.html
 Nachbarn: https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.NearestNeighbors.html
-KL: Kingma & Welling, https://arxiv.org/abs/1312.6114.
-Die Near-Prior-Schwelle ist deskriptiv und kein Signifikanztest auf Collapse.
 """
 from pathlib import Path
 import math
@@ -108,23 +106,6 @@ def label_geometry(points, labels, sample_ids, *, k, max_samples, seed):
     return output, pd.DataFrame(summary)
 
 
-def posterior_sample_table(posteriors, annotations, epsilon):
-    """Analytische KL zur N(0,I) pro Sample, keine KL aus einzelnen z-Draws."""
-    frames = []
-    for split in ('valid', 'test'):
-        data = posteriors[split]
-        mu, lv = np.asarray(data['mu'], float), np.asarray(data['logvar'], float)
-        ids = np.asarray(data['sample_ids'], str)
-        with np.errstate(over='raise', invalid='raise'):
-            kl = .5 * (mu**2 + np.expm1(lv) - lv)
-        frame = pd.DataFrame(dict(sample_id=ids, split=split, kl_total=kl.sum(axis=1),
-            kl_per_dimension=kl.mean(axis=1),
-            near_prior_dimension_fraction=(kl <= epsilon).mean(axis=1),
-            all_dimensions_near_prior=(kl <= epsilon).all(axis=1).astype(float)))
-        frames.append(frame)
-    return pd.concat(frames, ignore_index=True)
-
-
 def distribution_tables(samples, annotations, targets, edges):
     """Histogrammgrenzen fest über β/Runs; Überlauf bleibt als eigener Bin."""
     summaries, histograms = [], []
@@ -163,48 +144,6 @@ def distribution_tables(samples, annotations, targets, edges):
                             fraction=float(count/len(values)) if len(values) else np.nan,
                             status='ok' if complete else 'partial_or_unavailable'))
     return pd.DataFrame(summaries), pd.DataFrame(histograms)
-
-
-def make_reconstruction_callback(varix, posteriors):
-    """Finaler Decoder auf denselben z-Draws; MSE über alle Input-Features.
-
-    Keine Rekonstruktionen früherer Train-Epochen und kein Decode(μ)-Ersatz.
-    Der Aufrufer protokolliert fehlenden Decoder als fehlende Diagnose.
-    """
-    trainer = varix._trainer
-    model = trainer.get_model()
-    x_by_split = {}
-    for split in ('valid', 'test'):
-        dataset = getattr(varix.result.datasets, split)
-        ids = np.asarray(dataset.sample_ids, str)
-        if not np.array_equal(ids, np.asarray(posteriors[split]['sample_ids'], str)):
-            raise ValueError(f'Final posterior and decoder input IDs differ: {split}')
-        data = dataset.data
-        x_by_split[split] = (data.detach().cpu().numpy() if hasattr(data, 'detach') else np.asarray(data))
-
-    def reconstruct(split, z):
-        import torch
-        parameter = next(model.parameters())
-        x = x_by_split[split]
-        if len(x) != len(z):
-            raise ValueError('Reconstruction input/posterior length mismatch')
-        was_training = model.training
-        errors = []
-        model.eval()
-        try:
-            with torch.inference_mode(), trainer._fabric.autocast():
-                for start in range(0, len(z), trainer._config.batch_size):
-                    batch = torch.as_tensor(z[start:start+trainer._config.batch_size],
-                                             device=parameter.device, dtype=parameter.dtype)
-                    decoded = model.decode(batch).detach().cpu().numpy()
-                    original = np.asarray(x[start:start+len(decoded)], float)
-                    if decoded.shape != original.shape:
-                        raise ValueError('Decoder output and input feature shapes differ')
-                    errors.append(np.mean((decoded.astype(float)-original)**2, axis=1))
-        finally:
-            model.train(was_training)
-        return np.concatenate(errors)
-    return reconstruct
 
 
 def plot_diagnostics(directory, confusions, histograms):

@@ -150,6 +150,7 @@ def compute_autoencodix_total_correlation(varix: Any, z: np.ndarray) -> pd.DataF
 def run_information_theoretic_metrics_pipeline(
     inputs: CoreMetricInputs,
     varix: Any,
+    *, include_total_correlation: bool = True,
 ) -> pd.DataFrame:
     """Run core conditional rate and sampled-z TC diagnostics.
 
@@ -165,7 +166,7 @@ def run_information_theoretic_metrics_pipeline(
     """
     frames: list[pd.DataFrame] = []
 
-    if inputs.z_test is not None:
+    if include_total_correlation and inputs.z_test is not None:
         frames.append(compute_autoencodix_total_correlation(varix, inputs.z_test))
 
     if inputs.logvar_test is None:

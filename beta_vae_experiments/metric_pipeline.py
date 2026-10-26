@@ -14,13 +14,14 @@ from .metrics.evaluation.downstream import TARGETS, run_downstream_metrics_pipel
 from .metrics.evaluation.downstream import DownstreamMetricConfig
 from .metrics.evaluation.reconstruction import run_reconstruction_metrics_pipeline
 from .metrics.evaluation.native_losses import run_native_loss_metrics_pipeline
-from .metrics.geometry import GeometryMetricConfig, run_geometry_metrics_pipeline
+from .metrics.preservation import GeometryMetricConfig, run_geometry_metrics_pipeline
 from .metrics.information_theoretic import run_information_theoretic_metrics_pipeline
 from .metrics.latent_usage import (
     LatentUsageMetricConfig,
     run_latent_usage_metrics_pipeline,
 )
 from .metrics.topology import TopologyMetricConfig, run_topology_metrics_pipeline
+from .metrics.graph.neighbor_mixing_pipeline import NeighborMixingConfig, run_neighbor_mixing_pipeline
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig, run_graph_metrics_pipeline
 
 import numpy as np
@@ -52,6 +53,7 @@ class CoreMetricInputs:
     sample_ids_test: np.ndarray | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     sample_metadata_test: pd.DataFrame | Mapping[str, pd.DataFrame] | None = None
+    sample_metadata_train: pd.DataFrame | Mapping[str, pd.DataFrame] | None = None
 
 @dataclass(frozen=True)
 class AbsoluteCoreMetricConfig:
@@ -66,6 +68,8 @@ class AbsoluteCoreMetricConfig:
     )
     geometry: GeometryMetricConfig = field(default_factory=GeometryMetricConfig)
     topology: TopologyMetricConfig = field(default_factory=TopologyMetricConfig)
+    neighbor_mixing: NeighborMixingConfig = field(default_factory=NeighborMixingConfig)
+    preservation_only: bool = False
 
 def get_testsplit_numpy_rows(
     inputs: CoreMetricInputs,
@@ -102,29 +106,31 @@ def run_absolute_core_metrics_pipeline(
     output_dir = Path(config.output_dir)
 
     frames = [
-        run_graph_metrics_pipeline(
+        *([] if config.preservation_only else [run_graph_metrics_pipeline(
             inputs, selected_indices, x_selected, mu_selected,
             config.graph, config.geometry, output_dir,
-        ),
+        )]),
         run_native_loss_metrics_pipeline(inputs, varix),
         run_reconstruction_metrics_pipeline(inputs),
         run_latent_usage_metrics_pipeline(
             inputs, config.latent_usage, varix, output_dir
         ),
-        run_information_theoretic_metrics_pipeline(inputs, varix),
-        run_dimensionality_metrics_pipeline(
+        run_information_theoretic_metrics_pipeline(
+            inputs, varix, include_total_correlation=not config.preservation_only),
+        run_neighbor_mixing_pipeline(inputs, config.neighbor_mixing, output_dir),
+        *([] if config.preservation_only else [run_dimensionality_metrics_pipeline(
             inputs, selected_indices, x_selected, mu_selected,
             config.dimensionality,
             output_dir=output_dir,
-        ),
+        )]),
         run_geometry_metrics_pipeline(
             inputs, selected_indices, x_selected, mu_selected,
             config.geometry, output_dir,
         ),
-        run_topology_metrics_pipeline(
+        *([] if config.preservation_only else [run_topology_metrics_pipeline(
             inputs, selected_indices, x_selected, mu_selected,
             config.topology, output_dir
-        ),
+        )]),
         run_downstream_metrics_pipeline(
             varix,
             inputs.run_name,

@@ -29,6 +29,9 @@ import pandas as pd
 from scipy.stats import uniform_direction
 from sklearn.datasets import make_swiss_roll
 
+# Orthonormal plane in R3: all three coordinates vary; distances stay unchanged.
+_CIRCLE_PLANE = np.array([[1., -1., 0.], [1., 1., -2.]]) / np.sqrt([[2.], [6.]])
+
 @dataclass(frozen=True)
 class SyntheticManifoldDataset:
     """One immutable generated point cloud and its sample-aligned ground truth."""
@@ -79,7 +82,7 @@ def _circle(n_samples: int, dataset_seed: int, radius: float) -> np.ndarray:
         size=n_samples,
         random_state=dataset_seed,
     ) * float(radius)
-    return np.asarray(generated, dtype=np.float64)
+    return np.asarray(generated, dtype=np.float64) @ _CIRCLE_PLANE
 
 
 def _sphere(n_samples: int, dataset_seed: int, radius: float) -> np.ndarray:
@@ -109,11 +112,12 @@ def _generate_synthetic_manifold(
         radius = float(values.get("radius", 1.0))
         x = _circle(n_samples, dataset_seed, radius)
         sample_ids = [f"circle_{index:06d}" for index in range(n_samples)]
-        columns = ["circle_x", "circle_y"]
+        columns = ["circle_x", "circle_y", "circle_z"]
+        circle_coordinates = x @ _CIRCLE_PLANE.T
         sample_metadata = pd.DataFrame(
             {
                 "ground_truth_angle": np.mod(
-                    np.arctan2(x[:, 1], x[:, 0]), 2.0 * np.pi
+                    np.arctan2(circle_coordinates[:, 1], circle_coordinates[:, 0]), 2.0 * np.pi
                 )
             },
             index=sample_ids,
@@ -122,7 +126,9 @@ def _generate_synthetic_manifold(
             "dataset_family": "synthetic_manifold",
             "manifold_name": "circle",
             "topology": "S1",
-            "ambient_dimension": 2,
+            "ambient_dimension": 3,
+            "embedding": "planar_circle_in_R3",
+            "plane_basis": _CIRCLE_PLANE.tolist(),
             "intrinsic_dimension": 1,
             "betti_0": 1,
             "betti_1": 1,

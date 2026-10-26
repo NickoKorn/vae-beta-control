@@ -1,0 +1,83 @@
+{
+  "schema_version": 2,
+  "experiment_name": "tcga_slide42_preservation_overlap",
+  "output_dir": "../preservation_overlap_results",
+  "dataset": {
+    "id": "tcga",
+    "split_seed": 2,
+    "options": {
+      "data_root": "data/raw/TCGAPanCancerAutoencodix"
+    }
+  },
+  "training": {
+    "beta_over_d": [
+      0,
+      1.25e-05,
+      5e-05,
+      0.0001,
+      0.00025,
+      0.001,
+      0.004
+    ],
+    "latent_dims": [
+      8
+    ],
+    "seeds": [
+      17
+    ],
+    "learning_rates": [
+      0.0005
+    ],
+    "epochs": 1000,
+    "losses": [
+      "kl"
+    ],
+    "loss_reductions": [
+      "mean"
+    ],
+    "device": "cuda",
+    "anneal_function": "no-annealing",
+    "checkpoint_interval": 50,
+    "snapshots": {
+      "enabled": true,
+      "every": 50,
+      "downstream": true
+    },
+    "downstream_targets": [
+      "CANCER_TYPE_ACRONYM",
+      "CANCER_TYPE",
+      "SUBTYPE",
+      "SEX",
+      "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT",
+      "AGE"
+    ]
+  },
+  "metrics": {
+    "absolute_core": {
+      "enabled": true
+    },
+    "preservation_only": true,
+    "neighbor_mixing": {
+      "group_columns": [
+        "CANCER_TYPE_ACRONYM",
+        "SEX"
+      ],
+      "sex_mixed_cancers_only": true,
+      "n_neighbors": 20,
+      "n_draws": 50,
+      "seed": 31
+    },
+    "downstream": {
+      "n_draws": 10,
+      "sampling_seed": 31
+    }
+  },
+  "plots": {
+    "enabled": true,
+    "per_run": true
+  },
+  "execution": {
+    "resume_existing": true,
+    "rerun_passed": false
+  }
+}

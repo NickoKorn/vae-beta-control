@@ -187,6 +187,19 @@ def _clean(series):
     return series.mask(missing)
 
 
+def mixed_sex_cancers(train, min_class_train=5):
+    """Select cancer types with enough female and male training patients."""
+    counts = pd.crosstab(_clean(train['CANCER_TYPE_ACRONYM']), _clean(train['SEX']))
+    counts = counts.reindex(columns=['Female', 'Male'], fill_value=0)
+    return counts.index[(counts >= min_class_train).all(axis=1)].tolist()
+
+
+def sex_task_mask(metadata, cancers):
+    """Mark known-sex patients in the train-defined mixed-cancer cohort."""
+    return (metadata['CANCER_TYPE_ACRONYM'].isin(cancers)
+            & metadata['SEX'].isin(['Female', 'Male'])).to_numpy()
+
+
 def snapshot_tasks(labels, min_class_train=5):
     """Build train-defined clinical cohorts or synthetic ground-truth probes."""
     train = labels['train']
@@ -216,9 +229,7 @@ def snapshot_tasks(labels, min_class_train=5):
                              ('histology', 'CANCER_TYPE_DETAILED'),
                              ('histology_icd', 'ICD_O_3_HISTOLOGY')):
             add(name, target)
-        sex = _clean(train['SEX']) if 'SEX' in train else pd.Series(np.nan, index=train.index)
-        counts = pd.crosstab(cancers['train'], sex).reindex(columns=['Female', 'Male'], fill_value=0)
-        mixed = counts.index[(counts >= min_class_train).all(axis=1)]
+        mixed = mixed_sex_cancers(train, min_class_train) if 'SEX' in train else []
         add('sex_mixed_cancers', 'SEX', {s: cancers[s].isin(mixed).to_numpy()
                                        & labels[s].get('SEX', pd.Series(index=labels[s].index, dtype=object)).isin(['Female', 'Male']).to_numpy()
                                        for s in labels})
@@ -257,58 +268,57 @@ def evaluate_epoch_downstream(folder, epoch, posteriors, labels, effective_beta)
     output.mkdir(parents=True, exist_ok=True)
     scores, predictions, class_scores = [], [], []
     tasks = snapshot_tasks(labels)
-    for representation in ('mu', 'z'):
-        features = {}
-        for split_index, (split, posterior) in enumerate(posteriors.items()):
-            values = posterior['mu']
-            if representation == 'z':
-                if 'z' in posterior:
-                    values = posterior['z']
-                else:
-                    rng = np.random.default_rng(np.random.SeedSequence([31, split_index]))
-                    values = values + np.exp(.5 * posterior['logvar']) * rng.standard_normal(values.shape)
-            features[split] = pd.DataFrame(values, index=labels[split].index)
-        for task in tasks:
-            frames, annotations, partitions = [], [], []
-            for split in ('train', 'valid'):
-                keep = task['keep'][split]
-                frame = features[split].loc[keep]
-                frames.append(frame)
-                annotations.append(task['y'][split].loc[keep].rename(task['target']))
-                partitions.append(pd.DataFrame(dict(SAMPLE_ID=frame.index, SPLIT=split)))
-            frame = pd.concat(frames)
-            annotation = pd.concat(annotations).to_frame()
-            partition = pd.concat(partitions, ignore_index=True)
-            regression = task['regression']
-            model = LinearRegression() if regression else LogisticRegression(max_iter=1000)
-            metric = 'r2' if regression else 'roc_auc_ovo'
-            evaluator = ClassAUCEvaluator()
-            try:
-                result = evaluator._single_ml_presplit(partition, frame, annotation,
-                    task['target'], model, metric,
-                    'regression' if regression else 'classification', top_k_classes=None)
-                result = result.assign(status=np.where(np.isfinite(result.value), 'ok', 'unavailable'), warning=None)
-                if result.empty:
-                    raise ValueError('No evaluable training classes')
-            except ValueError as exc:
-                result = pd.DataFrame([dict(score_split='valid', CLINIC_PARAM=task['target'],
-                    metric=metric, value=np.nan, status='unavailable', warning=str(exc))])
-            scores.append(result.assign(task=task['name'], representation=representation))
-            records = getattr(evaluator, 'class_auc_records', [])
-            if records:
-                class_scores.append(pd.DataFrame(records).assign(task=task['name'], representation=representation))
-            # The model is fitted by AUTOENCODIX, including when only scoring fails.
-            if hasattr(model, 'coef_'):
-                valid = frames[1]
-                if len(valid):
-                    prediction = pd.DataFrame(dict(sample_id=valid.index,
-                        truth=annotation.loc[valid.index, task['target']].to_numpy(),
-                        prediction=model.predict(valid), task=task['name'], representation=representation))
-                    if not regression:
-                        probabilities = model.predict_proba(valid)
-                        for column, label in enumerate(model.classes_):
-                            prediction[f'probability:{label}'] = probabilities[:, column]
-                    predictions.append(prediction)
+    representation = 'z'
+    features = {}
+    for split_index, (split, posterior) in enumerate(posteriors.items()):
+        values = posterior['mu']
+        if 'z' in posterior:
+            values = posterior['z']
+        else:
+            rng = np.random.default_rng(np.random.SeedSequence([31, split_index]))
+            values = values + np.exp(.5 * posterior['logvar']) * rng.standard_normal(values.shape)
+        features[split] = pd.DataFrame(values, index=labels[split].index)
+    for task in tasks:
+        frames, annotations, partitions = [], [], []
+        for split in ('train', 'valid'):
+            keep = task['keep'][split]
+            frame = features[split].loc[keep]
+            frames.append(frame)
+            annotations.append(task['y'][split].loc[keep].rename(task['target']))
+            partitions.append(pd.DataFrame(dict(SAMPLE_ID=frame.index, SPLIT=split)))
+        frame = pd.concat(frames)
+        annotation = pd.concat(annotations).to_frame()
+        partition = pd.concat(partitions, ignore_index=True)
+        regression = task['regression']
+        model = LinearRegression() if regression else LogisticRegression(max_iter=1000)
+        metric = 'r2' if regression else 'roc_auc_ovo'
+        evaluator = ClassAUCEvaluator()
+        try:
+            result = evaluator._single_ml_presplit(partition, frame, annotation,
+                task['target'], model, metric,
+                'regression' if regression else 'classification', top_k_classes=None)
+            result = result.assign(status=np.where(np.isfinite(result.value), 'ok', 'unavailable'), warning=None)
+            if result.empty:
+                raise ValueError('No evaluable training classes')
+        except ValueError as exc:
+            result = pd.DataFrame([dict(score_split='valid', CLINIC_PARAM=task['target'],
+                metric=metric, value=np.nan, status='unavailable', warning=str(exc))])
+        scores.append(result.assign(task=task['name'], representation=representation))
+        records = getattr(evaluator, 'class_auc_records', [])
+        if records:
+            class_scores.append(pd.DataFrame(records).assign(task=task['name'], representation=representation))
+        # The model is fitted by AUTOENCODIX, including when only scoring fails.
+        if hasattr(model, 'coef_'):
+            valid = frames[1]
+            if len(valid):
+                prediction = pd.DataFrame(dict(sample_id=valid.index,
+                    truth=annotation.loc[valid.index, task['target']].to_numpy(),
+                    prediction=model.predict(valid), task=task['name'], representation=representation))
+                if not regression:
+                    probabilities = model.predict_proba(valid)
+                    for column, label in enumerate(model.classes_):
+                        prediction[f'probability:{label}'] = probabilities[:, column]
+                predictions.append(prediction)
     for name, frames in (('scores', scores), ('predictions', predictions), ('class_auc', class_scores)):
         table = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         table.assign(epoch=epoch, beta=effective_beta).to_csv(output / f'{name}.csv', index=False)
