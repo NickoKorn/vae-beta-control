@@ -56,6 +56,7 @@ JSON_DIR = EXPERIMENT_DIR / "user_interface"
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
     from beta_vae_experiments.metrics.evaluation.downstream import DownstreamMetricConfig
+    from beta_vae_experiments.topology_annealing import SigmaTopologyConfig
     metric_settings = settings["metrics"]
     if metric_settings.get("encoder_geometry", {}).get("enabled", False):
         raise ValueError("encoder_geometry was removed from the active pipeline")
@@ -79,6 +80,7 @@ def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
             }
         ),
         topology=TopologyMetricConfig(**metric_settings.get("topology", {})),
+        sigma_topology=SigmaTopologyConfig(**metric_settings.get("sigma_topology", {})),
     )
 
 def configure_epoch_snapshots(

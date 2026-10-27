@@ -21,6 +21,7 @@ from .metrics.latent_usage import (
     run_latent_usage_metrics_pipeline,
 )
 from .metrics.topology import TopologyMetricConfig, run_topology_metrics_pipeline
+from .topology_annealing import SigmaTopologyConfig, run_sigma_unit_topology_pipeline
 from .metrics.graph.neighbor_mixing_pipeline import NeighborMixingConfig, run_neighbor_mixing_pipeline
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig, run_graph_metrics_pipeline
 
@@ -69,12 +70,14 @@ class AbsoluteCoreMetricConfig:
     geometry: GeometryMetricConfig = field(default_factory=GeometryMetricConfig)
     topology: TopologyMetricConfig = field(default_factory=TopologyMetricConfig)
     neighbor_mixing: NeighborMixingConfig = field(default_factory=NeighborMixingConfig)
+    sigma_topology: SigmaTopologyConfig = field(default_factory=SigmaTopologyConfig)
     preservation_only: bool = False
 
 def get_testsplit_numpy_rows(
     inputs: CoreMetricInputs,
     geometry: GeometryMetricConfig,
     topology: TopologyMetricConfig,
+    sigma_topology: SigmaTopologyConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Select the same reproducible test subset for geometry, graph and topology."""
     if geometry.random_state != topology.random_state:
@@ -86,6 +89,8 @@ def get_testsplit_numpy_rows(
         if len(np.unique(sample_ids)) != len(sample_ids):
             raise ValueError("sample_ids_test must be unique for structural metrics")
     limit = min(geometry.max_samples, topology.max_samples)
+    if sigma_topology is not None:
+        limit = min(limit, sigma_topology.max_samples)
     if len(inputs.x_test) <= limit:
         indices = np.arange(len(inputs.x_test), dtype=int)
     else:
@@ -101,11 +106,13 @@ def run_absolute_core_metrics_pipeline(
 ) -> pd.DataFrame:
     """Run every metric family, save details locally, and return scalar metrics."""
     selected_indices, x_selected, mu_selected = get_testsplit_numpy_rows(
-        inputs, config.geometry, config.topology
+        inputs, config.geometry, config.topology, config.sigma_topology
     )
     output_dir = Path(config.output_dir)
 
     frames = [
+        run_sigma_unit_topology_pipeline(inputs, config.sigma_topology, output_dir,
+                                         selected_indices=selected_indices),
         *([] if config.preservation_only else [run_graph_metrics_pipeline(
             inputs, selected_indices, x_selected, mu_selected,
             config.graph, config.geometry, output_dir,
