@@ -312,6 +312,12 @@ def save_epoch_snapshots(varix, run_folder, every=50, downstream=True, beta_sche
             if set(posteriors) != {"train", "valid"}:
                 print(f"Snapshot epoch {epoch+1}: native posterior arrays missing; downstream unavailable")
                 continue
+            realized_schedule = Path(run_folder) / "beta_schedule.csv"
+            if realized_schedule.exists():
+                realized = pd.read_csv(realized_schedule).set_index("epoch")
+                effective_beta = float(realized.loc[epoch+1, "beta_config"])
+                evaluate_epoch_downstream(folder, epoch+1, posteriors, labels, effective_beta)
+                continue
             factor = 1.
             if factors is not None:
                 factor = factors[epoch]

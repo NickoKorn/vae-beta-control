@@ -249,6 +249,368 @@ def sigma_topology_over_epochs(run_folder, split='valid', config=None):
     return table
 
 
+@dataclass(frozen=True)
+class H0AnnealingConfig:
+    """Validation-only staircase; H0 overlap limits are not collapse thresholds."""
+    mode: str = 'h0'
+    rule: str = 'plateau'
+    eps: float = 2.
+    frac_max: float = .10
+    patience: int = 5
+    gap_margin: float = 4.
+    plateau_gap_factor: float = 4.
+    plateau_min_merged: float = .5
+    warmup_epochs: int = 100
+    w_min: float = 1e-4
+    growth: float = 1.25
+    step_epochs: int = 20
+    ema_epochs: int = 3
+    n_subsample: int = 800
+    seed: int = 31
+    w_max: float = 1.
+
+    def __post_init__(self):
+        if self.mode != 'h0' or self.rule not in ('keep_fine', 'plateau'):
+            raise ValueError('Expected mode=h0 and rule=keep_fine or plateau')
+        positive = (self.eps, self.gap_margin, self.plateau_gap_factor,
+                    self.w_min, self.growth, self.w_max)
+        if any(not np.isfinite(x) or x <= 0 for x in positive):
+            raise ValueError('Thresholds and weights must be positive and finite')
+        if not 0 <= self.frac_max <= 1 or not 0 <= self.plateau_min_merged <= 1:
+            raise ValueError('Merge fractions must lie in [0,1]')
+        if self.growth <= 1 or self.w_min > self.w_max:
+            raise ValueError('Require growth>1 and w_min<=w_max')
+        for name in ('patience', 'step_epochs', 'ema_epochs', 'n_subsample'):
+            if type(getattr(self,name)) is not int or getattr(self,name) < 1:
+                raise ValueError(f'{name} must be a positive integer')
+        if (type(self.warmup_epochs) is not int or self.warmup_epochs < 0
+                or self.ema_epochs > self.step_epochs or self.n_subsample < 2):
+            raise ValueError('Invalid warmup, averaging window or subsample size')
+
+
+@dataclass(frozen=True)
+class H0Stage:
+    w: float
+    previous_w: float = 0.
+    stage: int = 1
+    state: str = 'ramp'
+    history: tuple = ()
+    reason: str = ''
+
+
+def advance_h0_stage(stage, summary, config):
+    """Pure end-of-stage rule, using the mean of the stage's last measurements.
+
+    Plateau detection requires stable nontrivial component counts, a bounded
+    maximum gap, and sufficient completed merges. The gap emergency and
+    keep_fine roll back one weight; an accepted plateau retains its weight.
+    """
+    if stage.state == 'hold':
+        return stage
+    tag = _eps_tag(config.eps)
+    count = float(summary['h0_components_at_eps'+tag])
+    fraction = float(summary['h0_frac_below_eps'+tag])
+    gap = float(summary['h0_max_gap_sigma'])
+    if not np.isfinite([count, fraction, gap]).all():
+        raise ValueError('Stage decisions require finite H0 measurements')
+    history = stage.history + ((count, fraction, gap),)
+    if config.rule == 'keep_fine' and fraction > config.frac_max:
+        return replace(stage, w=stage.previous_w, state='hold', history=history, reason='fine_merge_limit')
+    if config.rule == 'plateau':
+        if gap < config.gap_margin:
+            return replace(stage, w=stage.previous_w, state='hold', history=history, reason='gap_emergency')
+        window = history[-config.patience:]
+        stable = (len(history) >= config.patience and count > 1
+                  and all(item[0] == count for item in window))
+        enough_merges = all(item[1] >= config.plateau_min_merged for item in window)
+        if stable and enough_merges and gap < config.plateau_gap_factor*config.gap_margin:
+            return replace(stage, state='hold', history=history, reason='stable_plateau')
+    if stage.w >= config.w_max:
+        return replace(stage, state='hold', history=history, reason='weight_cap')
+    return H0Stage(w=min(stage.w*config.growth, config.w_max), previous_w=stage.w,
+                   stage=stage.stage+1, history=history)
+
+
+def controller_tag(settings):
+    validated = asdict(H0AnnealingConfig(**settings))
+    digest = hashlib.sha256(json.dumps(validated,sort_keys=True).encode()).hexdigest()[:10]
+    return 'h0-'+validated['rule']+'-'+digest
+
+
+def make_h0_loss(settings, config, run_folder, n_valid):
+    """Observe ordered validation batches through the native VarixLoss hook.
+
+    Only validation posterior parameters enter decisions. Its fixed cohort is
+    selected once by row position; labels, training and test posteriors are unused.
+    A stage uses the arithmetic mean of its last ema_epochs measurements.
+    """
+    import torch
+    from autoencodix.utils._losses import VarixLoss
+    policy = H0AnnealingConfig(**settings)
+    if config.default_vae_loss != 'kl' or config.loss_reduction != 'mean':
+        raise ValueError('H0 annealing requires KL and mean reduction')
+    if config.anneal_function == 'no-annealing':
+        raise ValueError('no-annealing bypasses custom schedulers; use 3phase-linear')
+    if n_valid < 2:
+        raise ValueError('H0 annealing requires at least two validation patients')
+    selected = np.sort(np.random.default_rng(policy.seed).choice(n_valid,min(n_valid,policy.n_subsample),False))
+    folder = Path(run_folder)
+    folder.mkdir(parents=True,exist_ok=True)
+    (folder/'controller_config.json').write_text(json.dumps(dict(
+        settings=asdict(policy),n_validation=n_valid,validation_positions=selected.tolist(),
+        cohort='fixed positions in the native ordered validation loader; no labels',
+    ),indent=2)+'\n')
+
+    class H0Scheduler:
+        def __init__(self):
+            self.w = 0. if policy.warmup_epochs else policy.w_min
+
+        def get_weight(self, *, epoch_current, total_epoch, func):
+            return self.w
+
+    class H0VarixLoss(VarixLoss):
+        def __init__(self, config, annealing_scheduler=None):
+            if annealing_scheduler is not None:
+                raise ValueError('Cannot combine annealers')
+            self.h0_scheduler = H0Scheduler()
+            super().__init__(config,annealing_scheduler=self.h0_scheduler)
+            self.h0_stage = H0Stage(w=self.h0_scheduler.w, stage=0 if policy.warmup_epochs else 1,
+                                    state='warmup' if policy.warmup_epochs else 'ramp')
+            self.h0_epoch = None
+            self.h0_offset = 0
+            self.h0_means, self.h0_logvars = [], []
+            self.h0_stage_measurements = []
+            self.h0_logged = set()
+            self.h0_rows = []
+
+        def finish_validation(self):
+            if self.h0_epoch is None or self.h0_epoch in self.h0_logged:
+                return
+            if self.h0_offset != n_valid:
+                raise ValueError(f'Incomplete ordered validation cohort: {self.h0_offset}/{n_valid}')
+            mu, lv = np.concatenate(self.h0_means), np.concatenate(self.h0_logvars)
+            thresholds = tuple(sorted({1.,2.,3.,policy.eps}))
+            summary = sigma_unit_h0_summary(mu,lv,thresholds)
+            row = dict(epoch=self.h0_epoch+1,stage=self.h0_stage.stage,w=self.h0_scheduler.w,
+                       effective_beta=config.beta*self.h0_scheduler.w,
+                       beta_over_d=config.beta*self.h0_scheduler.w/config.latent_dim,
+                       state=self.h0_stage.state,reason=self.h0_stage.reason,
+                       seed=config.global_seed,latent_dim=config.latent_dim,**summary)
+            self.h0_rows.append(row)
+            pd.DataFrame(self.h0_rows).to_csv(folder/'controller_log.csv',index=False)
+            pd.DataFrame([dict(epoch=r['epoch'],beta_over_d=r['beta_over_d'],
+                               beta_config=r['effective_beta']) for r in self.h0_rows]).to_csv(folder/'beta_schedule.csv',index=False)
+            self.h0_logged.add(self.h0_epoch)
+            if self.h0_stage.state == 'ramp':
+                self.h0_stage_measurements.append(summary)
+                if len(self.h0_stage_measurements) == policy.step_epochs:
+                    tail = self.h0_stage_measurements[-policy.ema_epochs:]
+                    averaged = {key:float(np.mean([item[key] for item in tail])) for key in summary}
+                    self.h0_stage = advance_h0_stage(self.h0_stage,averaged,policy)
+                    self.h0_stage_measurements = []
+            self.h0_offset = 0
+            self.h0_means, self.h0_logvars = [], []
+
+        def forward(self, model_output, targets, epoch=None, **kwargs):
+            if epoch is not None and torch.is_grad_enabled() and epoch != self.h0_epoch:
+                self.finish_validation()
+                if self.h0_stage.state == 'warmup' and epoch >= policy.warmup_epochs:
+                    self.h0_stage = H0Stage(w=policy.w_min)
+                self.h0_scheduler.w = self.h0_stage.w
+                self.h0_epoch = int(epoch)
+            if epoch is not None and not torch.is_grad_enabled():
+                count = len(model_output.latent_mean)
+                local = selected[(selected>=self.h0_offset)&(selected<self.h0_offset+count)]-self.h0_offset
+                if len(local):
+                    self.h0_means.append(model_output.latent_mean[local].detach().cpu().numpy().astype(np.float64))
+                    # Native latent_logvar/_sigma_buffer is log variance, NOT sigma.
+                    self.h0_logvars.append(model_output.latent_logvar[local].detach().cpu().numpy().astype(np.float64))
+                self.h0_offset += count
+            result = super().forward(model_output=model_output,targets=targets,epoch=epoch,**kwargs)
+            # Varix.run() reinitializes its trainer/loss for final prediction.
+            # Flush the last validation before that reset, since no next epoch exists.
+            if (epoch == config.epochs-1 and not torch.is_grad_enabled()
+                    and self.h0_offset == n_valid):
+                self.finish_validation()
+            return result
+
+        def finalize(self):
+            self.finish_validation()
+
+    return H0VarixLoss
+
+
+def evaluate_sigma_snapshots(run_folder, varix=None):
+    """Post-training label-based validation on mu and recorded z; never controls beta.
+
+    Linear/logistic and 15-neighbor probes share train-defined snapshot_tasks.
+    Classification uses macro OvO AUC; regression uses R2. Native train arrays
+    were collected during updates, so these are checkpoint diagnostics rather
+    than fresh encodings with a common frozen model. Missing arrays stay missing.
+    """
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+    from sklearn.metrics import roc_auc_score, r2_score
+    from .metrics.evaluation.downstream import snapshot_tasks
+    from .metrics.information_theoretic import compute_conditional_kl_matrix
+    folder = Path(run_folder)/'epoch_snapshots'
+    rows, diagnostics, dimensions = [], [], []
+    beta = _beta_by_epoch(run_folder)
+    for train_path in sorted(folder.glob('epoch_*_train.npz')):
+        epoch = int(train_path.stem.split('_')[1])
+        valid_path = folder/train_path.name.replace('_train','_valid')
+        if not valid_path.exists():
+            continue
+        with np.load(train_path) as train, np.load(valid_path) as valid:
+            arrays = {'train':dict(train),'valid':dict(valid)}
+        labels = {}
+        for split, values in arrays.items():
+            label_path = folder/f'labels_{split}.parquet'
+            if not label_path.exists() or 'sample_ids' not in values:
+                break
+            frame = pd.read_parquet(label_path)
+            frame.index = frame.index.astype(str)
+            labels[split] = frame.loc[values['sample_ids'].astype(str)].copy()
+        valid = arrays['valid']
+        lv = valid.get('logvar',valid.get('sigmas'))
+        if 'mu' in valid and lv is not None:
+            kl = compute_conditional_kl_matrix(valid['mu'],lv)
+            diagnostics.append(dict(epoch=epoch,effective_beta=beta.get(epoch,np.nan),
+                                    rate=float(kl.sum(1).mean()),n_collapsed_dims_kl=_collapsed_dimensions(valid['mu'],lv)))
+            for dimension in range(kl.shape[1]):
+                dimensions.append(dict(epoch=epoch,dimension=dimension,kl_mean=kl[:,dimension].mean(),
+                                       fraction_below_0p01=np.mean(kl[:,dimension]<.01),
+                                       is_collapsed=np.mean(kl[:,dimension]<.01)>=.99))
+        if varix is not None:
+            from .data_pipeline import to_numpy
+            reconstruction = to_numpy(varix.result.reconstructions.get(epoch=epoch-1,split='valid'))
+            if reconstruction is not None and len(reconstruction):
+                actual = to_numpy(varix.result.datasets.valid.data)
+                diagnostics.append(dict(epoch=epoch,effective_beta=beta.get(epoch,np.nan),
+                                        reconstruction_r2=r2_score(actual,reconstruction)))
+        if set(labels) != {'train','valid'}:
+            continue
+        for task in snapshot_tasks(labels):
+            for representation in ('mu','z'):
+                if any(representation not in values for values in arrays.values()):
+                    continue
+                keep = task['keep']
+                x = {s:arrays[s][representation][keep[s]] for s in arrays}
+                y = {s:task['y'][s].to_numpy()[keep[s]] for s in arrays}
+                for method in ('linear','knn15'):
+                    row = dict(epoch=epoch,effective_beta=beta.get(epoch,np.nan),task=task['name'],
+                               representation=representation,method=method,n_train=len(y['train']),n_valid=len(y['valid']))
+                    try:
+                        if len(y['train'])<15 or len(y['valid'])<2:
+                            raise ValueError('Insufficient cohort for shared 15-neighbor comparison')
+                        if task['regression']:
+                            model = Ridge() if method=='linear' else KNeighborsRegressor(15)
+                            model.fit(x['train'],y['train'].astype(float))
+                            score = r2_score(y['valid'].astype(float),model.predict(x['valid']))
+                            score_name='r2'
+                        else:
+                            model = LogisticRegression(max_iter=1000) if method=='linear' else KNeighborsClassifier(15)
+                            model.fit(x['train'],y['train'])
+                            probabilities = model.predict_proba(x['valid'])
+                            if set(y['valid']) != set(model.classes_):
+                                raise ValueError('Validation cohort does not cover every training class')
+                            score = (roc_auc_score(y['valid'],probabilities[:,1]) if len(model.classes_)==2 else
+                                     roc_auc_score(y['valid'],probabilities,labels=model.classes_,multi_class='ovo',average='macro'))
+                            score_name='auc_ovo'
+                        rows.append(dict(**row,score=score,score_name=score_name,status='ok',warning=None))
+                    except ValueError as error:
+                        rows.append(dict(**row,score=np.nan,status='unavailable',warning=str(error)))
+    result = pd.DataFrame(rows)
+    result.to_csv(Path(run_folder)/'sigma_downstream.csv',index=False)
+    pd.DataFrame(diagnostics).to_csv(Path(run_folder)/'sigma_validation_diagnostics.csv',index=False)
+    pd.DataFrame(dimensions).to_csv(Path(run_folder)/'sigma_kl_dimensions.csv',index=False)
+    return result
+
+
+def plot_sigma_training_curves(run_folder, latent_dim):
+    """H0 and downstream curves versus realized beta/d; chronology is retained.
+
+    Drop markers denote a 5% relative decrease from the first available AUC.
+    Vertical plateau markers indicate accepted controller plateaus, not proof
+    of task preservation. Repeated beta values can have distinct training ages.
+    """
+    import matplotlib.pyplot as plt
+    folder=Path(run_folder)
+    betti_path=folder/'sigma_betti_valid_summary.csv'
+    topology=pd.read_csv(betti_path if betti_path.exists() else folder/'sigma_topology_valid_epochs.csv')
+    path=folder/'sigma_downstream.csv'
+    try: downstream=pd.read_csv(path)
+    except pd.errors.EmptyDataError: downstream=pd.DataFrame()
+    tasks=[] if downstream.empty else downstream.task.unique().tolist()
+    fig,axes=plt.subplots(3+len(tasks),1,figsize=(10,3*(3+len(tasks))),sharex=True,squeeze=False)
+    axes=axes[:,0]
+    for ax,key in zip(axes,('nn_median_sigma','h0_max_gap_sigma','h1_main_persistence_sigma')):
+        if key in topology:
+            ax.plot(topology.effective_beta/latent_dim,topology[key],'.-')
+        ax.set_ylabel(key)
+    for ax,task in zip(axes[3:],tasks):
+        for (representation,method), group in downstream[downstream.task.eq(task)].groupby(['representation','method']):
+            group=group[group.status.eq('ok')].sort_values('epoch')
+            if group.empty:continue
+            x=group.effective_beta/latent_dim
+            ax.plot(x,group.score,'.-',label=f'{representation}: {method}')
+            if group.iloc[0].get('score_name')=='auc_ovo':
+                drops=group[group.score<.95*group.iloc[0].score]
+                if not drops.empty:ax.axvline(drops.iloc[0].effective_beta/latent_dim,color='red',alpha=.3)
+        ax.set_ylabel(task);ax.legend(fontsize=7)
+    log_path=folder/'controller_log.csv'
+    if log_path.exists():
+        log=pd.read_csv(log_path)
+        for value in log.loc[log.reason.eq('stable_plateau'),'beta_over_d'].unique():
+            for ax in axes:ax.axvline(value,color='green',linestyle='--',alpha=.5)
+    for ax in axes:ax.set_xscale('symlog',linthresh=1e-8)
+    axes[-1].set_xlabel('Realized beta / latent dimension (zero shown on symlog axis)')
+    fig.tight_layout();fig.savefig(folder/'sigma_training_curves.png',dpi=160);plt.close(fig)
+
+
+def analyze_sigma_run(varix, run_folder, dataset=None):
+    """Posthoc-only labels and plots, independently of the validation controller."""
+    sigma_topology_over_epochs(run_folder)
+    sigma_betti_over_epochs(run_folder,dataset=dataset)
+    plot_sigma_betti_curves(run_folder)
+    evaluate_sigma_snapshots(run_folder,varix)
+    plot_sigma_training_curves(run_folder,varix.config.latent_dim)
+
+
+def apply_fixed_beta_baseline(settings, controller_log):
+    """Match one completed controller run's last *realized* beta, seed and dimension.
+
+    Invoke once per controller log; do not silently broadcast an endpoint from
+    one seed onto other seeds. The source log must represent a completed run.
+    """
+    import copy
+    settings=copy.deepcopy(settings)
+    table=pd.read_csv(controller_log)
+    required={'epoch','effective_beta','seed','latent_dim'}
+    if not required <= set(table) or table.empty or table.epoch.duplicated().any():
+        raise ValueError('Expected a nonempty controller log with unique epochs, seed and dimension')
+    if table.seed.nunique()!=1 or table.latent_dim.nunique()!=1:
+        raise ValueError('Controller log must belong to exactly one seed and dimension')
+    last=table.sort_values('epoch').iloc[-1]
+    if int(last.epoch)!=int(settings['training']['epochs']):
+        raise ValueError('Controller log must cover the baseline training duration')
+    training=settings['training']
+    training.pop('beta_controller',None);training.pop('beta_schedule',None);training.pop('betas',None)
+    training.pop('require_controller_endpoint',None)
+    training.update(anneal_function='no-annealing',beta_over_d=[float(last.effective_beta/last.latent_dim)],
+                    seeds=[int(last.seed)],latent_dims=[int(last.latent_dim)])
+    settings['fixed_beta_controller_source']=str(Path(controller_log).resolve())
+    endpoint_tag=hashlib.sha256(Path(controller_log).read_bytes()).hexdigest()[:12]
+    settings['output_dir']=Path(settings['output_dir'])/('endpoint-'+endpoint_tag)
+    # Split identity is checked against the source experiment, not inferred from seed.
+    source=Path(controller_log).resolve().parents[2]/'experiment_config.json'
+    if not source.exists():raise ValueError('Source experiment configuration is required for cohort matching')
+    original=json.loads(source.read_text())
+    if original['dataset']!=settings['dataset']:
+        raise ValueError('Fixed endpoint baseline must use the same dataset options and split')
+    return settings
+
+
 def betti_curves(dist, eps_grid=None):
     """Sample b0/b1 over scale; additionally retain exact diagram breakpoints.
 
