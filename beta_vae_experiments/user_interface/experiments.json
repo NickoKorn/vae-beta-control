@@ -290,6 +290,303 @@
           },
           "experiment_name": "biology_beta_over_d_2026_09_29_pancancer",
           "output_dir": "../new_results_2026-09-29/biology_beta_over_d_2026_09_29_pancancer"
+        },
+        "tcga_sigma_calibration": {
+          "dataset": {
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
+          },
+          "training": {
+            "anneal_function": "no-annealing",
+            "beta_over_d": [
+              0.0,
+              1.25e-06,
+              3.125e-06,
+              6.25e-06,
+              1.25e-05,
+              1.875e-05,
+              2.5e-05,
+              3.75e-05,
+              5e-05,
+              7.5e-05,
+              9.375e-05,
+              0.000125,
+              0.0001875,
+              0.00025,
+              0.0005,
+              0.001,
+              0.0015,
+              0.0025,
+              0.00375,
+              0.005
+            ],
+            "epochs": 1000,
+            "seeds": [
+              13,
+              17,
+              23,
+              31,
+              47
+            ],
+            "checkpoint_interval": 20,
+            "snapshots": {
+              "enabled": true,
+              "every": 20,
+              "downstream": true
+            },
+            "sigma_analysis": true
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            },
+            "sigma_topology": {
+              "eps": [
+                1,
+                2,
+                3
+              ],
+              "max_samples": 1000,
+              "compute_h1": true
+            }
+          },
+          "experiment_name": "tcga_sigma_calibration",
+          "output_dir": "../outputs/sigma_topology/tcga_sigma_calibration"
+        },
+        "tcga_h0_keep_fine": {
+          "dataset": {
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
+          },
+          "training": {
+            "anneal_function": "3phase-linear",
+            "beta_over_d": [
+              0.005
+            ],
+            "epochs": 1000,
+            "seeds": [
+              13,
+              17,
+              23,
+              31,
+              47
+            ],
+            "checkpoint_interval": 20,
+            "snapshots": {
+              "enabled": true,
+              "every": 20,
+              "downstream": true
+            },
+            "sigma_analysis": true,
+            "beta_controller": {
+              "mode": "h0",
+              "rule": "keep_fine",
+              "eps": 2.0,
+              "frac_max": 0.1,
+              "patience": 5,
+              "gap_margin": 4.0,
+              "plateau_gap_factor": 4.0,
+              "plateau_min_merged": 0.5,
+              "warmup_epochs": 100,
+              "w_min": 0.0001,
+              "growth": 1.25,
+              "step_epochs": 20,
+              "ema_epochs": 3,
+              "n_subsample": 800
+            }
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            },
+            "sigma_topology": {
+              "eps": [
+                1,
+                2,
+                3
+              ],
+              "max_samples": 1000,
+              "compute_h1": true
+            }
+          },
+          "experiment_name": "tcga_h0_keep_fine",
+          "output_dir": "../outputs/sigma_topology/tcga_h0_keep_fine"
+        },
+        "tcga_h0_plateau": {
+          "dataset": {
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
+          },
+          "training": {
+            "anneal_function": "3phase-linear",
+            "beta_over_d": [
+              0.005
+            ],
+            "epochs": 1000,
+            "seeds": [
+              13,
+              17,
+              23,
+              31,
+              47
+            ],
+            "checkpoint_interval": 20,
+            "snapshots": {
+              "enabled": true,
+              "every": 20,
+              "downstream": true
+            },
+            "sigma_analysis": true,
+            "beta_controller": {
+              "mode": "h0",
+              "rule": "plateau",
+              "eps": 2.0,
+              "frac_max": 0.1,
+              "patience": 5,
+              "gap_margin": 4.0,
+              "plateau_gap_factor": 4.0,
+              "plateau_min_merged": 0.5,
+              "warmup_epochs": 100,
+              "w_min": 0.0001,
+              "growth": 1.25,
+              "step_epochs": 20,
+              "ema_epochs": 3,
+              "n_subsample": 800
+            }
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            },
+            "sigma_topology": {
+              "eps": [
+                1,
+                2,
+                3
+              ],
+              "max_samples": 1000,
+              "compute_h1": true
+            }
+          },
+          "experiment_name": "tcga_h0_plateau",
+          "output_dir": "../outputs/sigma_topology/tcga_h0_plateau"
+        },
+        "tcga_h0_logistic_baseline": {
+          "dataset": {
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
+          },
+          "training": {
+            "anneal_function": "logistic-mid",
+            "beta_over_d": [
+              0.005
+            ],
+            "epochs": 1000,
+            "seeds": [
+              13,
+              17,
+              23,
+              31,
+              47
+            ],
+            "checkpoint_interval": 20,
+            "snapshots": {
+              "enabled": true,
+              "every": 20,
+              "downstream": true
+            },
+            "sigma_analysis": true
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            },
+            "sigma_topology": {
+              "eps": [
+                1,
+                2,
+                3
+              ],
+              "max_samples": 1000,
+              "compute_h1": true
+            }
+          },
+          "experiment_name": "tcga_h0_logistic_baseline",
+          "output_dir": "../outputs/sigma_topology/tcga_h0_logistic_baseline"
+        },
+        "tcga_h0_fixed_end_baseline": {
+          "dataset": {
+            "id": "tcga",
+            "options": {
+              "data_root": "data/raw/TCGAPanCancerAutoencodix",
+              "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+              "methylation_file": "data_methylation_per_gene_formatted.parquet",
+              "clinical_file": "data_clinical_formatted.parquet"
+            }
+          },
+          "training": {
+            "anneal_function": "no-annealing",
+            "beta_over_d": [
+              0.005
+            ],
+            "epochs": 1000,
+            "seeds": [
+              13,
+              17,
+              23,
+              31,
+              47
+            ],
+            "checkpoint_interval": 20,
+            "snapshots": {
+              "enabled": true,
+              "every": 20,
+              "downstream": true
+            },
+            "sigma_analysis": true,
+            "require_controller_endpoint": true
+          },
+          "metrics": {
+            "topology": {
+              "landscape_num_landscapes": 5,
+              "landscape_resolution": 100
+            },
+            "sigma_topology": {
+              "eps": [
+                1,
+                2,
+                3
+              ],
+              "max_samples": 1000,
+              "compute_h1": true
+            }
+          },
+          "experiment_name": "tcga_h0_fixed_end_baseline",
+          "output_dir": "../outputs/sigma_topology/tcga_h0_fixed_end_baseline"
         }
       }
     },
