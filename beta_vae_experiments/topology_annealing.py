@@ -759,3 +759,132 @@ def plot_sigma_betti_curves(run_folder, split='valid'):
     fig.tight_layout();path=folder/f'sigma_betti_{split}_curves.png'
     fig.savefig(path,dpi=160);plt.close(fig)
     return path
+
+
+def analyze_complete_circle_runs(results_root, output_dir):
+    """Compare complete archived Circle runs, without training or filling gaps.
+
+    Require every configured Train/Validation snapshot and actual mu/logvar/z/IDs.
+    Circle sin/cos targets are continuous: downstream quality is R2, not AUC.
+    Curves reuse native recorded z (one draw), not a new Monte Carlo estimate.
+    Train posteriors were captured during batch updates, as in native snapshots.
+    """
+    import matplotlib.pyplot as plt
+    results_root, output_dir = Path(results_root), Path(output_dir)
+    output_dir.mkdir(parents=True,exist_ok=True)
+    manifest, excluded, topology_frames, probe_frames, rate_frames = [], [], [], [], []
+    for experiment in sorted(results_root.glob('*circle*')):
+        config_path, overview_path = experiment/'experiment_config.json', experiment/'experiment_metrics.csv'
+        if not config_path.exists() or not overview_path.exists():
+            continue
+        settings = json.loads(config_path.read_text())
+        interval = settings['training'].get('snapshots',{}).get('every',50)
+        epochs = int(settings['training']['epochs'])
+        expected_epochs = set(range(interval,epochs+1,interval)) | {epochs}
+        overview = pd.read_csv(overview_path)
+        for _, run in overview[overview.status.eq('ok')].iterrows():
+            folder = experiment/'run_analysis'/run.run_name
+            problem = None
+            for split in ('train','valid'):
+                for epoch in sorted(expected_epochs):
+                    path = folder/'epoch_snapshots'/f'epoch_{epoch:05d}_{split}.npz'
+                    if not path.exists():
+                        problem = f'Missing {split} snapshot at epoch {epoch}'
+                        break
+                    with np.load(path) as saved:
+                        if not {'mu','logvar','z','sample_ids'} <= set(saved.files):
+                            problem = f'Missing actual posterior arrays: {split}, epoch {epoch}'
+                            break
+                if problem:
+                    break
+            context = dict(run_name=run.run_name,experiment=experiment.name,
+                           split_seed=settings['dataset']['split_seed'],seed=int(run.seed),
+                           target_beta=float(run.beta),latent_dim=int(run.latent_dim))
+            if problem:
+                excluded.append(dict(**context,reason=problem))
+                continue
+            print(f'Analyzing complete Circle run: split {context["split_seed"]}, seed {context["seed"]}',flush=True)
+            manifest.append(dict(**context,epochs=epochs,n_snapshots=len(expected_epochs),run_folder=str(folder.resolve())))
+            topology_path = folder/'sigma_betti_valid_summary.csv'
+            if not topology_path.exists():
+                sigma_betti_over_epochs(folder,dataset='circle')
+            topology = pd.read_csv(topology_path)
+            if set(topology.epoch) != expected_epochs or not topology.status.eq('ok').all():
+                raise ValueError(f'Incomplete topology summary for {run.run_name}')
+            topology_frames.append(topology.assign(**context))
+            probes = evaluate_sigma_snapshots(folder)
+            probe_frames.append(probes.assign(**context))
+            rates = pd.read_csv(folder/'sigma_validation_diagnostics.csv')
+            rate_frames.append(rates.assign(**context))
+            plot_sigma_betti_curves(folder)
+            plot_sigma_training_curves(folder,int(run.latent_dim))
+            if int(run.latent_dim)==2:
+                _plot_circle_snapshot_coordinates(folder,output_dir,context,sorted(expected_epochs))
+    pd.DataFrame(manifest).to_csv(output_dir/'included_runs.csv',index=False)
+    pd.DataFrame(excluded).to_csv(output_dir/'excluded_runs.csv',index=False)
+    if not manifest:
+        raise ValueError('No complete Circle runs found')
+    topology = pd.concat(topology_frames,ignore_index=True)
+    probes = pd.concat(probe_frames,ignore_index=True)
+    rates = pd.concat(rate_frames,ignore_index=True)
+    topology.to_csv(output_dir/'circle_topology_epochs.csv',index=False)
+    probes.to_csv(output_dir/'circle_downstream_epochs.csv',index=False)
+    rates.to_csv(output_dir/'circle_rate_epochs.csv',index=False)
+    fig,axes = plt.subplots(3,2,figsize=(13,12),sharex=True)
+    for _, group in topology.groupby('run_name'):
+        for ax, key in zip(axes.flat[:4],('h1_main_birth_sigma','h1_main_death_sigma','h1_main_persistence_sigma','nn_median_sigma')):
+            ax.plot(group.epoch,group[key],'.-',alpha=.55)
+            ax.set_ylabel(key)
+    for ax in axes.flat[:2]:
+        ax.axhline(2,color='red',linestyle='--',label='2 sigma')
+        ax.set_yscale('symlog',linthresh=.01)
+    for _,group in rates.groupby('run_name'):
+        axes[2,0].plot(group.epoch,group.rate,alpha=.55)
+    axes[2,0].set_ylabel('Rate (nats per patient)')
+    successful = probes[probes.status.eq('ok')]
+    for (representation,method),group in successful.groupby(['representation','method']):
+        # Average sin/cos only for the overview; individual target scores stay in CSV.
+        per_run = group.groupby(['run_name','epoch']).score.mean().reset_index()
+        median = per_run.groupby('epoch').score.median()
+        axes[2,1].plot(median.index,median,label=f'{representation}, {method}')
+    axes[2,1].set_ylabel('Median R2 (mean of sin/cos per run)')
+    axes[2,1].legend(fontsize=8)
+    for ax in axes[-1]:
+        ax.set_xlabel('Epoch')
+    fig.suptitle('Complete Circle runs: archived validation posteriors, no new training')
+    fig.tight_layout();fig.savefig(output_dir/'circle_complete_runs.png',dpi=170);plt.close(fig)
+    final = topology[topology.epoch.eq(epochs)]
+    phases = topology.h1_phase_at_eps2.value_counts().to_dict()
+    report = dict(n_runs=len(manifest),n_excluded=len(excluded),n_snapshots=len(topology),
+                  h1_phases_at_eps2=phases,finite_h1_snapshots=int(topology.h1_main_death_sigma.notna().sum()),
+                  resolved_at_eps2=int(topology.h1_phase_at_eps2.eq('resolved').sum()),
+                  final_rate_min=float(rates.loc[rates.epoch.eq(epochs),'rate'].min()),
+                  final_rate_max=float(rates.loc[rates.epoch.eq(epochs),'rate'].max()),
+                  final_collapsed_dims=final.n_collapsed_dims_kl.value_counts().to_dict(),
+                  limitation='First snapshot at epoch 50; transitions before it are unobserved. No claim of causal annealer performance.')
+    (output_dir/'summary.json').write_text(json.dumps(report,indent=2)+'\n')
+    return report
+
+
+def _plot_circle_snapshot_coordinates(run_folder, output_dir, context, epochs):
+    """Compare stored mu and z colored by angle, with exact ID alignment."""
+    import matplotlib.pyplot as plt
+    folder = Path(run_folder)/'epoch_snapshots'
+    labels = pd.read_parquet(folder/'labels_valid.parquet')
+    labels.index = labels.index.astype(str)
+    if 'ground_truth_angle' not in labels:
+        return
+    selected = [epochs[0],epochs[len(epochs)//2-1],epochs[-1]]
+    fig,axes = plt.subplots(2,3,figsize=(12,7))
+    for column,epoch in enumerate(selected):
+        with np.load(folder/f'epoch_{epoch:05d}_valid.npz') as saved:
+            angle = labels.loc[saved['sample_ids'].astype(str),'ground_truth_angle'].to_numpy()
+            for row,key in enumerate(('mu','z')):
+                values = saved[key]
+                axes[row,column].scatter(values[:,0],values[:,1],c=angle,cmap='twilight',vmin=0,vmax=2*np.pi,s=7,alpha=.65)
+                axes[row,column].set(title=f'{key}, epoch {epoch}',xlabel='Latent coordinate 1',ylabel='Latent coordinate 2')
+                axes[row,column].set_aspect('equal',adjustable='datalim')
+    fig.suptitle(f'Circle: split {context["split_seed"]}, seed {context["seed"]}; color = true angle')
+    fig.tight_layout()
+    fig.savefig(Path(output_dir)/f'circle_coordinates_split{context["split_seed"]}_seed{context["seed"]}.png',dpi=160)
+    plt.close(fig)
