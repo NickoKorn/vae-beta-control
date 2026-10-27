@@ -15,10 +15,12 @@ from beta_vae_experiments.metrics.graph.graph_community_metrics import compute_c
 from beta_vae_experiments.metrics.graph.graph_connectivity_metrics import compute_connectivity
 from beta_vae_experiments.metrics.graph.graph_path_metrics import compute_paths
 from beta_vae_experiments.metrics.graph.input_latent_graph_comparison import compare_graphs
+from beta_vae_experiments.metrics.graph.graph_curvature_metrics import compute_curvature
 from beta_vae_experiments.metrics.graph.graph_export import export_graph
 from beta_vae_experiments.metrics.graph.label_diagnostics import compute_label_diagnostics
 
 FAMILY_OUTPUTS = {
+    "curvature": tuple("forman_" + name for name in ("mean", "median", "std", "q10", "q90", "negative_fraction")),
     "global_id": ("global_id",),
     "local_id": tuple("local_id_"+s for s in ("mean", "median", "std", "q10", "q25", "q75", "q90")),
     "hubness": ("hubness_skewness", "antihub_fraction", "hub_occurrence", "hub_fraction", "robinhood", "groupie_ratio"),
@@ -41,7 +43,7 @@ class GraphMetricConfig:
     k_values: tuple[int, ...] | None = None
     export_graphml: bool = False
     max_path_nodes: int = 3000
-    families: tuple[str, ...] = ("hubness", "neighborhood", "community", "connectivity")
+    families: tuple[str, ...] = ("hubness", "neighborhood", "community", "connectivity", "curvature")
     leiden_resolution: float = 1.0
     leiden_iterations: int = 2
     label_columns: tuple[str, ...] = ("CANCER_TYPE_ACRONYM", "SEX")
@@ -78,7 +80,7 @@ def run_graph_metrics_pipeline(inputs, selected_indices, x_selected, mu_selected
     start = time.perf_counter()
     versions = {}
     for package in ("numpy", "pandas", "scipy", "scikit-learn", "scikit-dimension",
-                    "scikit-hubness", "networkx", "igraph", "python-louvain"):
+                    "scikit-hubness", "networkx", "igraph", "python-louvain", "GraphRicciCurvature"):
         try:
             versions[package] = version(package)
         except PackageNotFoundError:
@@ -162,6 +164,7 @@ def run_graph_metrics_pipeline(inputs, selected_indices, x_selected, mu_selected
                     config.leiden_resolution, config.leiden_iterations)),
                 ("connectivity", lambda: compute_connectivity(graph, geometry.random_state)),
                 ("paths", lambda: compute_paths(graph, config.max_path_nodes)),
+                ("curvature", lambda: compute_curvature(graph)),
             ]
             for name, call in families:
                 if name in config.families:

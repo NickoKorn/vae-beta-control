@@ -164,8 +164,9 @@ def save_varix_result_plots(
         save_dimensionwise_cancer_ridgelines(varix, plot_dir, split="test")
 
     if params:
-        evaluation_result = varix.evaluate(params=list(params))
-        evaluation = getattr(evaluation_result, "embedding_evaluation", None)
+        # Reuse the already computed use-split, all-class evaluation. A second
+        # native call would otherwise restore its default top-20 class limit.
+        evaluation = getattr(varix.result, "embedding_evaluation", None)
         if isinstance(evaluation, pd.DataFrame) and not evaluation.empty:
             _save_evaluation_table(evaluation, plot_dir / "embedding_evaluation")
     varix.visualizer.save_plots(path=str(plot_dir), which="all", format="png")

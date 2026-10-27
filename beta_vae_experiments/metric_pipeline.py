@@ -21,7 +21,7 @@ from .metrics.latent_usage import (
     run_latent_usage_metrics_pipeline,
 )
 from .metrics.topology import TopologyMetricConfig, run_topology_metrics_pipeline
-from .topology_annealing import SigmaTopologyConfig, run_sigma_unit_topology_pipeline
+from .metrics.complementary.topology_annealing import SigmaTopologyConfig, run_sigma_unit_topology_pipeline
 from .metrics.graph.neighbor_mixing_pipeline import NeighborMixingConfig, run_neighbor_mixing_pipeline
 from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig, run_graph_metrics_pipeline
 
@@ -89,7 +89,7 @@ def get_testsplit_numpy_rows(
         if len(np.unique(sample_ids)) != len(sample_ids):
             raise ValueError("sample_ids_test must be unique for structural metrics")
     limit = min(geometry.max_samples, topology.max_samples)
-    if sigma_topology is not None:
+    if sigma_topology is not None and sigma_topology.enabled:
         limit = min(limit, sigma_topology.max_samples)
     if len(inputs.x_test) <= limit:
         indices = np.arange(len(inputs.x_test), dtype=int)

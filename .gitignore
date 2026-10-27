@@ -141,3 +141,21 @@ coverage.xml
 # Large-scale results and generated configurations stay local.
 /beta_vae_experiments/large_scale_results/
 /beta_vae_experiments/analysis_results/
+
+# Standalone TCGA input-data exploration; generated tables/plots remain ignored.
+!/beta_vae_experiments/tcga_data_analysis.py
+!/beta_vae_experiments/tcga_data_analysis.ipynb
+
+# Native-loss preservation annealing source.
+!/beta_vae_experiments/preservation_annealing.py
+
+# Interactive preservation annealing pilot.
+!/beta_vae_experiments/preservation_annealing_demo.ipynb
+
+# Optional sigma-topology module referenced by the training and metric entry points.
+!/beta_vae_experiments/metrics/complementary/
+!/beta_vae_experiments/metrics/complementary/topology_annealing.py
+
+# Forman curvature used by the graph metric pipeline.
+!/beta_vae_experiments/metrics/graph/
+!/beta_vae_experiments/metrics/graph/graph_curvature_metrics.py

@@ -10,7 +10,7 @@ deterministic posterior-mean representation mu.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from importlib.metadata import version
 from threading import Lock
@@ -47,6 +47,7 @@ class GeometryMetricConfig:
     core_only: bool = False
     distance_metric: str = "euclidean"
     selected_k: int = 20
+    k_values: tuple[int, ...] | None = None
     max_samples: int = 3000
     random_state: int = 31
     # Produktionsreferenz: k=20, gemeinsame euklidische X->mu-Stichprobe.
@@ -55,6 +56,12 @@ class GeometryMetricConfig:
     # k/Sample-Size-Piloten sind getrennte Analysen, kein Test-AUC-Tuning.
 
     def __post_init__(self) -> None:
+        if self.k_values is not None:
+            object.__setattr__(self, "k_values", tuple(self.k_values))
+            if (not self.k_values or len(set(self.k_values)) != len(self.k_values)
+                    or self.selected_k not in self.k_values
+                    or any(type(k) is not int or k < 1 for k in self.k_values)):
+                raise ValueError("k_values must be distinct positive integers including selected_k")
         if self.distance_metric != "euclidean":
             raise ValueError("geometry distance_metric must be 'euclidean'")
         if type(self.selected_k) is not int or self.selected_k < 1:
@@ -528,6 +535,19 @@ def run_geometry_metrics_pipeline(
         Yes. This is the geometry group runner; metric selection determines
         which of its outputs enter the core result.
     """
+    if config.k_values is not None:
+        frames = []
+        for k in (config.selected_k, *(k for k in config.k_values if k != config.selected_k)):
+            if k >= len(x_selected) / 2:
+                raise ValueError(f"Requested preservation k={k} requires more than {2*k} samples")
+            destination = output_dir
+            if destination is not None and k != config.selected_k:
+                destination = Path(destination) / "sensitivity" / f"k{k}"
+            frames.append(run_geometry_metrics_pipeline(
+                inputs, selected_indices, x_selected, mu_selected,
+                replace(config, selected_k=k, k_values=None), destination))
+        # Global measures have no k suffix: retain their primary-k result once.
+        return pd.concat(frames, ignore_index=True).drop_duplicates("metric_name", keep="first")
     x = _validated_space(x_selected, "x_selected")
     mu = _validated_space(mu_selected, "mu_selected")
     indices = np.asarray(selected_indices)

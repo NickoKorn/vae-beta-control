@@ -13,6 +13,13 @@ from .user_interface.config import CATALOG, load_config
 
 def prepare(suite_reference, output_dir):
     suite = load_config(suite_reference)
+    controller = suite.get('beta_controller')
+    schedule_settings = suite.get('schedule')
+    if controller and schedule_settings:
+        raise ValueError('Choose either beta_controller or schedule')
+    if controller:
+        from .preservation_annealing import PreservationAnnealingConfig
+        PreservationAnnealingConfig(**controller)
     seeds = suite['split_seeds']
     if (not seeds or len(set(seeds)) != len(seeds)
             or any(type(seed) is not int or seed < 0 for seed in seeds)):
@@ -28,7 +35,12 @@ def prepare(suite_reference, output_dir):
     project = Path(__file__).resolve().parent.parent
     for dataset in suite['datasets']:
         latent_dims = dataset.get('latent_dims', suite['latent_dims'])
-        schedule = schedule_from_settings(suite['schedule'], max(dataset['beta_over_d']))
+        training_seeds = dataset.get('seeds', suite['seeds'])
+        schedule = schedule_from_settings(schedule_settings, max(dataset['beta_over_d'])) if schedule_settings else None
+        epochs = schedule.epochs if schedule else int(suite['epochs'])
+        warmup_epochs = schedule.warmup_epochs if schedule else int(controller['warmup_epochs']) if controller else 0
+        if epochs < 1:
+            raise ValueError('epochs must be positive')
         for split_seed in seeds:
             name = f"{suite['experiment_name']}_{dataset['name']}_split{split_seed}"
             options = copy.deepcopy(dataset['options'])
@@ -40,15 +52,20 @@ def prepare(suite_reference, output_dir):
                 **({'require_results_mount': suite['require_results_mount']}
                    if suite.get('require_results_mount') else {}),
                 output_dir=str(directory / name),
+                preprocessed_data_dir=str(directory / "preprocessed_data" / f"{dataset['id']}_split{split_seed}"),
                 dataset=dict(id=dataset['id'], split_seed=split_seed, options=options),
                 training=dict(beta_over_d=dataset['beta_over_d'], learning_rates=suite['learning_rates'],
-                    latent_dims=latent_dims, seeds=suite['seeds'], epochs=schedule.epochs,
+                    latent_dims=latent_dims, seeds=training_seeds, epochs=epochs,
                     losses=['kl'], loss_reductions=['mean'], device=suite['device'],
-                    checkpoint_interval=suite['snapshots'].get('every', 50), anneal_function='3phase-linear',
-                    beta_schedule=suite['schedule'], snapshots=suite['snapshots'],
+                    weight_decay=dataset.get('weight_decay', suite.get('weight_decay', 0.01)),
+                    checkpoint_interval=suite['snapshots'].get('every', 50),
+                    anneal_function='3phase-linear' if controller or schedule else 'no-annealing',
+                    **({'beta_controller': controller} if controller else {'beta_schedule': schedule_settings} if schedule else {}),
+                    snapshots=suite['snapshots'],
                     downstream_targets=suite['analysis']['auc_targets'] if dataset['id'] == 'tcga' else []),
                 metrics=dict(preservation_only=suite.get('preservation_only', False),
-                             absolute_core=dict(enabled=True), topology=dict(max_samples=1000),
+                             absolute_core=dict(enabled=suite.get('compute_metrics', True)), topology=dict(max_samples=1000),
+                             geometry=dict(selected_k=20, k_values=suite['analysis']['k_values']),
                              graph=dict(k_values=suite['analysis']['k_values']),
                              downstream=dict(n_draws=10, sampling_seed=31),
                              neighbor_mixing=dict(n_draws=50, n_neighbors=20, seed=31,
@@ -59,14 +76,15 @@ def prepare(suite_reference, output_dir):
             )
             (configs / f'{name}.json').write_text(json.dumps(config, indent=2) + '\n')
             runs = (len(dataset['beta_over_d']) * len(latent_dims)
-                    * len(suite['seeds']) * len(suite['learning_rates']))
+                    * len(training_seeds) * len(suite['learning_rates']))
             rows.append(dict(dataset=dataset['name'], split_seed=split_seed, runs=runs,
-                             epochs=schedule.epochs, warmup_epochs=schedule.warmup_epochs,
-                             training_epochs_total=runs * schedule.epochs, config=f'{name}.json'))
+                             epochs=epochs, warmup_epochs=warmup_epochs,
+                             training_epochs_total=runs * epochs, config=f'{name}.json'))
     inventory = pd.DataFrame(rows)
     inventory.to_csv(directory / 'suite_inventory.csv', index=False)
-    pd.DataFrame(dict(epoch=np.arange(schedule.epochs) + 1, factor=schedule.factors())).to_csv(
-        directory / 'beta_schedule.csv', index=False)
+    if schedule_settings:
+        pd.DataFrame(dict(epoch=np.arange(schedule.epochs) + 1, factor=schedule.factors())).to_csv(
+            directory / 'beta_schedule.csv', index=False)
     (directory / 'suite.json').write_text(json.dumps(suite, indent=2) + '\n')
     return inventory
 

@@ -1,7 +1,6 @@
 """Whole-union connectivity via NetworkX; disconnected lambda2 is zero.
 
 Unweighted algebraic_connectivity uses the library solver, seed 31 by default.
-See graph_metrics.md for scope and software references.
 """
 import networkx as nx
 

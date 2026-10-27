@@ -744,6 +744,660 @@
             "target_betas_are_exploratory": true,
             "metric_feedback_controller_enabled": false
           }
+        },
+        "trustworthiness": {
+          "preservation_only": true,
+          "split_seeds": [
+            2,
+            3,
+            5
+          ],
+          "device": "cuda",
+          "latent_dims": [
+            4,
+            8,
+            16
+          ],
+          "seeds": [
+            13,
+            17,
+            23,
+            31
+          ],
+          "learning_rates": [
+            0.0005
+          ],
+          "snapshots": {
+            "enabled": true,
+            "every": 50,
+            "downstream": true
+          },
+          "datasets": [
+            {
+              "name": "tcga_pancancer",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_over_d": [
+                0.015
+              ]
+            },
+            {
+              "name": "circle",
+              "latent_dims": [
+                2
+              ],
+              "id": "circle",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "sphere",
+              "id": "sphere",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll_correlated",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 0.02
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll_noisy_copies",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 1.0
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            }
+          ],
+          "results_root": "beta_vae_experiments",
+          "plots": {
+            "enabled": true,
+            "per_run": true
+          },
+          "experiment_name": "large_scale_trustworthiness_2026_10_27",
+          "results_date": "2026-10-27",
+          "analysis": {
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "auc_targets": [
+              "CANCER_TYPE_ACRONYM",
+              "CANCER_TYPE",
+              "SUBTYPE",
+              "SEX",
+              "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT",
+              "AGE"
+            ],
+            "k_values": [
+              20
+            ],
+            "selection_split": "valid",
+            "target_betas_are_exploratory": true,
+            "metric_feedback_controller_enabled": true,
+            "target_score_is_provisional": true,
+            "hypothesized_task": "cancer",
+            "labels_used_for_control": false,
+            "selected_metric": "trustworthiness",
+            "primary_sex_task": "sex_mixed_cancers",
+            "sex_cohort": "at least 5 Female and 5 Male training patients and >=5% per sex; fixed for validation"
+          },
+          "epochs": 1000,
+          "beta_controller": {
+            "mode": "preservation",
+            "metric": "trustworthiness",
+            "target": 0.75,
+            "warmup_epochs": 100,
+            "step_epochs": 20,
+            "w_min": 0.0001,
+            "growth": 1.25,
+            "n_subsample": 800,
+            "k": 20,
+            "seed": 31,
+            "target_mode": "relative_warmup",
+            "max_invalid_measurements": 3
+          }
+        },
+        "cohesiveness": {
+          "preservation_only": true,
+          "split_seeds": [
+            2,
+            3,
+            5
+          ],
+          "device": "cuda",
+          "latent_dims": [
+            4,
+            8,
+            16
+          ],
+          "seeds": [
+            13,
+            17,
+            23,
+            31
+          ],
+          "learning_rates": [
+            0.0005
+          ],
+          "snapshots": {
+            "enabled": true,
+            "every": 50,
+            "downstream": true
+          },
+          "datasets": [
+            {
+              "name": "tcga_pancancer",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_over_d": [
+                0.015
+              ]
+            },
+            {
+              "name": "circle",
+              "latent_dims": [
+                2
+              ],
+              "id": "circle",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "sphere",
+              "id": "sphere",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll_correlated",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 0.02
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            },
+            {
+              "name": "swiss_roll_noisy_copies",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0,
+                "correlated_copies": 8,
+                "observation_noise": 1.0
+              },
+              "beta_over_d": [
+                1.0
+              ]
+            }
+          ],
+          "results_root": "beta_vae_experiments",
+          "plots": {
+            "enabled": true,
+            "per_run": true
+          },
+          "experiment_name": "large_scale_cohesiveness_2026_10_27",
+          "results_date": "2026-10-27",
+          "analysis": {
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "auc_targets": [
+              "CANCER_TYPE_ACRONYM",
+              "CANCER_TYPE",
+              "SUBTYPE",
+              "SEX",
+              "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT",
+              "AGE"
+            ],
+            "k_values": [
+              20
+            ],
+            "selection_split": "valid",
+            "target_betas_are_exploratory": true,
+            "metric_feedback_controller_enabled": true,
+            "target_score_is_provisional": true,
+            "hypothesized_task": "sex",
+            "labels_used_for_control": false,
+            "selected_metric": "cohesiveness",
+            "primary_sex_task": "sex_mixed_cancers",
+            "sex_cohort": "at least 5 Female and 5 Male training patients and >=5% per sex; fixed for validation"
+          },
+          "epochs": 1000,
+          "beta_controller": {
+            "mode": "preservation",
+            "metric": "cohesiveness",
+            "target": 0.75,
+            "warmup_epochs": 100,
+            "step_epochs": 20,
+            "w_min": 0.0001,
+            "growth": 1.25,
+            "n_subsample": 800,
+            "k": 20,
+            "seed": 31,
+            "target_mode": "relative_warmup",
+            "max_invalid_measurements": 3
+          }
+        },
+        "fixed_beta": {
+          "preservation_only": false,
+          "split_seeds": [
+            2,
+            3,
+            5
+          ],
+          "device": "cuda",
+          "latent_dims": [
+            4,
+            8,
+            16
+          ],
+          "seeds": [
+            13,
+            17,
+            23,
+            31
+          ],
+          "learning_rates": [
+            0.0005,
+            0.001
+          ],
+          "snapshots": {
+            "enabled": true,
+            "every": 50,
+            "downstream": true
+          },
+          "datasets": [
+            {
+              "name": "tcga_pancancer",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_over_d": [
+                0,
+                1e-06,
+                2.5e-06,
+                5e-06,
+                1.25e-05,
+                2.5e-05,
+                5e-05,
+                0.0001,
+                0.00025,
+                0.0005,
+                0.001,
+                0.002,
+                0.004,
+                0.008,
+                0.015
+              ]
+            },
+            {
+              "name": "circle",
+              "latent_dims": [
+                1,
+                2,
+                3
+              ],
+              "id": "circle",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                0,
+                1e-05,
+                0.0001,
+                0.001,
+                0.003,
+                0.01,
+                0.03,
+                0.1
+              ]
+            },
+            {
+              "name": "swiss_roll",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0
+              },
+              "beta_over_d": [
+                0,
+                1e-05,
+                0.0001,
+                0.001,
+                0.003,
+                0.01,
+                0.03,
+                0.1
+              ],
+              "latent_dims": [
+                1,
+                2,
+                3
+              ]
+            }
+          ],
+          "results_root": "beta_vae_experiments",
+          "plots": {
+            "enabled": true,
+            "per_run": true
+          },
+          "experiment_name": "large_scale_fixed_beta_two_lr_2026_10_27",
+          "results_date": "2026-10-27",
+          "analysis": {
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "auc_targets": [
+              "CANCER_TYPE_ACRONYM",
+              "CANCER_TYPE",
+              "CANCER_TYPE_DETAILED",
+              "ICD_O_3_HISTOLOGY",
+              "SUBTYPE",
+              "SEX",
+              "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT",
+              "AGE"
+            ],
+            "k_values": [
+              10,
+              20,
+              40
+            ],
+            "selection_split": "valid",
+            "target_betas_are_exploratory": true,
+            "metric_feedback_controller_enabled": false,
+            "target_score_is_provisional": true,
+            "hypothesized_task": null,
+            "labels_used_for_control": false,
+            "selected_metric": null,
+            "primary_sex_task": "sex_mixed_cancers",
+            "sex_cohort": "at least 5 Female and 5 Male training patients and >=5% per sex; fixed for validation"
+          },
+          "epochs": 1000
+        },
+        "fixed_beta_first": {
+          "preservation_only": false,
+          "split_seeds": [
+            2
+          ],
+          "device": "cuda",
+          "latent_dims": [
+            8
+          ],
+          "seeds": [
+            13,
+            17,
+            23,
+            31
+          ],
+          "learning_rates": [
+            0.0005
+          ],
+          "snapshots": {
+            "enabled": true,
+            "every": 50,
+            "downstream": false,
+            "test": true
+          },
+          "datasets": [
+            {
+              "name": "tcga_pancancer",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_over_d": [
+                0,
+                1e-06,
+                2.5e-06,
+                5e-06,
+                1.25e-05,
+                2.5e-05,
+                5e-05,
+                0.0001,
+                0.00025,
+                0.0005,
+                0.001,
+                0.002,
+                0.004,
+                0.008,
+                0.015
+              ],
+              "latent_dims": [
+                8
+              ],
+              "seeds": [
+                13,
+                17,
+                23,
+                31
+              ]
+            },
+            {
+              "name": "circle",
+              "latent_dims": [
+                2
+              ],
+              "id": "circle",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42
+              },
+              "beta_over_d": [
+                0,
+                1e-05,
+                0.0001,
+                0.001,
+                0.003,
+                0.005,
+                0.01,
+                0.02,
+                0.03,
+                0.05,
+                0.1
+              ],
+              "seeds": [
+                13,
+                17
+              ]
+            },
+            {
+              "name": "swiss_roll",
+              "id": "swiss_roll",
+              "split_seed": 2,
+              "options": {
+                "n_samples": 5000,
+                "dataset_seed": 42,
+                "noise": 0.0
+              },
+              "beta_over_d": [
+                0,
+                1e-05,
+                0.0001,
+                0.001,
+                0.003,
+                0.005,
+                0.01,
+                0.02,
+                0.03,
+                0.05,
+                0.1
+              ],
+              "latent_dims": [
+                2
+              ],
+              "seeds": [
+                13,
+                17
+              ]
+            },
+            {
+              "name": "tcga_no_weight_decay",
+              "id": "tcga",
+              "split_seed": 2,
+              "options": {
+                "data_root": "data/raw/TCGAPanCancerAutoencodix",
+                "rna_file": "data_mrna_seq_v2_rsem_formatted.parquet",
+                "methylation_file": "data_methylation_per_gene_formatted.parquet",
+                "clinical_file": "data_clinical_formatted.parquet"
+              },
+              "beta_over_d": [
+                0
+              ],
+              "latent_dims": [
+                8
+              ],
+              "seeds": [
+                13,
+                17
+              ],
+              "weight_decay": 0
+            }
+          ],
+          "results_root": "beta_vae_experiments",
+          "plots": {
+            "enabled": false,
+            "per_run": false
+          },
+          "experiment_name": "fixed_beta_106_epochs750_2026_10_27",
+          "results_date": "2026-10-27",
+          "analysis": {
+            "held_out_confirmation": {
+              "split_seed": 7,
+              "synthetic_dataset_seed": 73
+            },
+            "auc_targets": [
+              "CANCER_TYPE_ACRONYM",
+              "CANCER_TYPE",
+              "CANCER_TYPE_DETAILED",
+              "ICD_O_3_HISTOLOGY",
+              "SUBTYPE",
+              "SEX",
+              "AJCC_PATHOLOGIC_TUMOR_STAGE_SHORT",
+              "AGE"
+            ],
+            "k_values": [
+              10,
+              20,
+              40
+            ],
+            "selection_split": "valid",
+            "target_betas_are_exploratory": true,
+            "metric_feedback_controller_enabled": false,
+            "target_score_is_provisional": true,
+            "hypothesized_task": null,
+            "labels_used_for_control": false,
+            "selected_metric": null,
+            "primary_sex_task": "sex_mixed_cancers",
+            "sex_cohort": "at least 5 Female and 5 Male training patients and >=5% per sex; fixed for validation"
+          },
+          "epochs": 750,
+          "compute_metrics": false
         }
       }
     }

@@ -43,7 +43,7 @@ def sigma_unit_distances(mu, logvar, block=256):
         (also coordinatewise scaling); not general rotations of diagonal models.
         Scores still depend on sample count, latent dimension and data selection.
     Direction: smaller means closer posterior means relative to uncertainty.
-    In core metrics included: yes, independent of diameter-normalized TDA.
+    In core metrics included: no; optional complementary analysis.
     """
     mu, logvar = _posterior_arrays(mu, logvar)
     if type(block) is not int or block < 1:
@@ -111,8 +111,8 @@ def sigma_unit_h0_summary(mu, logvar, eps=(1.,2.,3.)):
 
 
 def _collapsed_dimensions(mu, logvar):
-    from .metrics.information_theoretic import compute_conditional_kl_matrix
-    from .metrics.latent_usage import PosteriorCollapseConfig
+    from beta_vae_experiments.metrics.information_theoretic import compute_conditional_kl_matrix
+    from beta_vae_experiments.metrics.latent_usage import PosteriorCollapseConfig
     policy = PosteriorCollapseConfig()
     kl = compute_conditional_kl_matrix(mu, logvar)
     return int(np.sum(np.mean(kl < policy.primary_epsilon, axis=0) >= 1-policy.delta))
@@ -120,11 +120,14 @@ def _collapsed_dimensions(mu, logvar):
 
 @dataclass(frozen=True)
 class SigmaTopologyConfig:
+    enabled: bool = False
     eps: tuple[float,...] = (1.,2.,3.)
     max_samples: int = 1000
     compute_h1: bool = False
 
     def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError('enabled must be boolean')
         object.__setattr__(self,'eps',tuple(self.eps))
         if not self.eps or len(set(self.eps))!=len(self.eps) or any(not np.isfinite(e) or e<=0 for e in self.eps):
             raise ValueError('eps must be distinct positive finite values')
@@ -147,7 +150,7 @@ def plot_sigma_barcode(deaths, path, eps=(1.,2.,3.)):
 
 def _h1_summary(dist, eps):
     from ripser import ripser
-    from .metrics.topology.preservation import RIPSER_CONFIG
+    from beta_vae_experiments.metrics.topology.preservation import RIPSER_CONFIG
     diagram = ripser(dist, **RIPSER_CONFIG)['dgms'][1]
     values = {'h1_alive_eps'+_eps_tag(e):int(np.sum((diagram[:,0]<e)&(diagram[:,1]>=e))) for e in eps}
     values.update(_main_h1_bar(diagram))
@@ -165,6 +168,8 @@ def _main_h1_bar(diagram):
 
 def run_sigma_unit_topology_pipeline(inputs, config, output_dir=None, *, selected_indices=None):
     """Use the shared test subset, including its actual posterior log-variances."""
+    if not config.enabled:
+        return pd.DataFrame()
     indices = selected_indices
     if indices is None:
         n = len(inputs.mu_test)
@@ -451,8 +456,8 @@ def evaluate_sigma_snapshots(run_folder, varix=None):
     from sklearn.linear_model import LogisticRegression, Ridge
     from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
     from sklearn.metrics import roc_auc_score, r2_score
-    from .metrics.evaluation.downstream import snapshot_tasks
-    from .metrics.information_theoretic import compute_conditional_kl_matrix
+    from beta_vae_experiments.metrics.evaluation.downstream import snapshot_tasks
+    from beta_vae_experiments.metrics.information_theoretic import compute_conditional_kl_matrix
     folder = Path(run_folder)/'epoch_snapshots'
     rows, diagnostics, dimensions = [], [], []
     beta = _beta_by_epoch(run_folder)
@@ -482,7 +487,7 @@ def evaluate_sigma_snapshots(run_folder, varix=None):
                                        fraction_below_0p01=np.mean(kl[:,dimension]<.01),
                                        is_collapsed=np.mean(kl[:,dimension]<.01)>=.99))
         if varix is not None:
-            from .data_pipeline import to_numpy
+            from beta_vae_experiments.data_pipeline import to_numpy
             reconstruction = to_numpy(varix.result.reconstructions.get(epoch=epoch-1,split='valid'))
             if reconstruction is not None and len(reconstruction):
                 actual = to_numpy(varix.result.datasets.valid.data)
@@ -619,7 +624,7 @@ def betti_curves(dist, eps_grid=None):
     merge summaries). Finite point sampling can create short spurious H1 bars.
     """
     from ripser import ripser
-    from .metrics.topology.preservation import RIPSER_CONFIG
+    from beta_vae_experiments.metrics.topology.preservation import RIPSER_CONFIG
     grid = np.geomspace(.1,100,240) if eps_grid is None else np.asarray(eps_grid,dtype=float)
     if grid.ndim!=1 or len(grid)<2 or not np.isfinite(grid).all() or np.any(grid<=0) or np.any(np.diff(grid)<=0):
         raise ValueError('epsilon grid must be finite, positive and strictly increasing')

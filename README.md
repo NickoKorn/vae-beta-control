@@ -142,6 +142,22 @@ Choose **VAE beta control (Python 3.11)** and execute the cells in order.
 results; use `START_HERE.ipynb` for a fresh clone. Those analysis notebooks expect
 the repository root as their working directory.
 
+The current research notebooks are:
+
+- `beta_vae_experiments/preservation_annealing_demo.ipynb`: the active
+  preservation annealer with live training progress.
+- `beta_vae_experiments/tcga_data_analysis.ipynb`: TCGA input distributions
+  and variance by downstream task.
+- `beta_vae_experiments/analysis.ipynb`: presentation analyses and metric selection.
+- `beta_vae_experiments/additional_downstream_tasks.ipynb`: additional
+  downstream evaluations on saved posteriors.
+
+Dated notebooks in `results_26_09/` document historical results.
+`beta_annealing.py` supplies the schedule baselines; `preservation_annealing.py`
+implements the active metric-driven annealer. `metrics/complementary/topology_annealing.py` contains the experimental H0
+annealer and sigma-topology analyses. These metrics are disabled by default;
+set `metrics.sigma_topology.enabled` to `true` for an explicit comparison run.
+
 ## Configure an experiment and export epoch snapshots
 
 Copy `beta_vae_experiments/user_interface/quickstart.json`, choose a new
@@ -265,3 +281,27 @@ Neighbor mixing is a separate graph diagnostic with 50 posterior draws. Its
 current cancer/sex grouping uses clinical labels; it is not a label-free controller.
 Downstream probes use z only, including epoch snapshots. Final repeated-z AUC
 uses the median of 10 evaluations. Snapshots are saved every 50 epochs.
+
+## Fixed-beta calibration series
+
+The `annealing.fixed_beta_first` catalog profile prepares 106 fixed-beta models:
+60 TCGA models, 22 Circle models, 22 Swiss Roll models, and two TCGA controls
+with beta zero and weight decay zero. Each trains for 750 epochs at learning
+rate 0.0005; annealing and downstream/structural metric evaluation are disabled.
+
+```bash
+.venv/bin/python -m beta_vae_experiments.prepare_json_for_training \
+  'beta_vae_experiments/user_interface/experiments.json#annealing.fixed_beta_first' \
+  --output-dir beta_vae_experiments/large_scale_results/my_fixed_beta_series
+```
+
+This command only prepares JSON files and an inventory. It does not start training.
+Run configurations through `new_beta_varix_experiments` as described above.
+The generated configs export exact preprocessed Train/Validation/Test inputs,
+feature IDs and annotations once per dataset/split. With `snapshots.test: true`,
+a local trainer extension exports evaluation-mode posteriors for all three
+splits every 50 epochs. It uses the native `trainer_type` extension point;
+the pinned AUTOENCODIX package is unchanged. Test data are encoded for export
+only and are not used to select or update models. Graph, TDA and downstream
+analyses can be run later from these artifacts. Parallel GPU throughput must
+be measured on the target machine; free VRAM alone is not a speedup guarantee.

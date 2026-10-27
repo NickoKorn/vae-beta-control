@@ -35,6 +35,10 @@ class ClassAUCEvaluator(GeneralEvaluator):
 
     def _single_ml_presplit(self, sample_split, df, clin_data, task_param,
                            sklearn_ml, metric, ml_type, top_k_classes=20):
+        # AUTOENCODIX fills absent annotations with the string "missing".
+        # Exclude placeholders per task, without mutating other tasks' cohorts.
+        eligible = _clean(clin_data[task_param]).dropna().index.intersection(df.index)
+        sample_split = sample_split.loc[sample_split.SAMPLE_ID.isin(eligible)]
         results = super()._single_ml_presplit(
             sample_split, df, clin_data, task_param, sklearn_ml,
             metric, ml_type, top_k_classes,
@@ -90,7 +94,8 @@ def compute_z_logistic_regression_probes_use_split(
     """
     if isinstance(getattr(varix, "evaluator", None), ClassAUCEvaluator):
         varix.evaluator.class_auc_records = []
-    varix.evaluate(params=list(targets), reference_methods=[], split_type="use-split", top_k_classes=None)
+    varix.evaluate(params=list(targets), reference_methods=[], split_type="use-split",
+                   top_k_classes=None, n_downsample=None)
     details = varix.result.embedding_evaluation.copy().reset_index(drop=True)
     details = details.loc[
         details["metric"].isin(["roc_auc_ovo", "r2"])
@@ -187,11 +192,19 @@ def _clean(series):
     return series.mask(missing)
 
 
-def mixed_sex_cancers(train, min_class_train=5):
-    """Select cancer types with enough female and male training patients."""
+def mixed_sex_cancers(train, min_class_train=5, min_sex_fraction=0.05):
+    """Train-defined mixed cancers: >=5 per sex and >=5% each by default.
+
+    The fraction is an explicit cohort convention, not a biological threshold.
+    It excludes near-single-sex types such as BRCA despite a few male patients.
+    Validation/test labels never determine membership.
+    """
+    if not 0 <= min_sex_fraction <= 0.5:
+        raise ValueError('min_sex_fraction must lie in [0, 0.5]')
     counts = pd.crosstab(_clean(train['CANCER_TYPE_ACRONYM']), _clean(train['SEX']))
     counts = counts.reindex(columns=['Female', 'Male'], fill_value=0)
-    return counts.index[(counts >= min_class_train).all(axis=1)].tolist()
+    fractions = counts.div(counts.sum(axis=1), axis=0)
+    return counts.index[((counts >= min_class_train) & (fractions >= min_sex_fraction)).all(axis=1)].tolist()
 
 
 def sex_task_mask(metadata, cancers):

@@ -38,6 +38,8 @@ from beta_vae_experiments.data_pipeline import (
     prepare_metric_inputs_from_varix_result,
     save_posteriors,
     save_epoch_snapshots,
+    save_preprocessed_splits,
+    make_snapshot_trainer,
 )
 from beta_vae_experiments.datasets import (
     generate_synthetic_dataset,
@@ -56,7 +58,7 @@ JSON_DIR = EXPERIMENT_DIR / "user_interface"
 def build_metric_config(settings: dict[str, Any]) -> AbsoluteCoreMetricConfig:
     """Build each metric family's validated configuration from JSON defaults/overrides."""
     from beta_vae_experiments.metrics.evaluation.downstream import DownstreamMetricConfig
-    from beta_vae_experiments.topology_annealing import SigmaTopologyConfig
+    from beta_vae_experiments.metrics.complementary.topology_annealing import SigmaTopologyConfig
     metric_settings = settings["metrics"]
     if metric_settings.get("encoder_geometry", {}).get("enabled", False):
         raise ValueError("encoder_geometry was removed from the active pipeline")
@@ -101,7 +103,7 @@ def configure_epoch_snapshots(
 def validate_snapshot_config(training):
     """Check options for exporting native checkpoint arrays after training."""
     snapshots = training.get("snapshots", {})
-    for name, default in (("enabled", False), ("downstream", True)):
+    for name, default in (("enabled", False), ("downstream", True), ("test", False)):
         if type(snapshots.get(name, default)) is not bool:
             raise ValueError(f"snapshots.{name} must be boolean")
     every = snapshots.get("every", 50)
@@ -196,9 +198,12 @@ def build_training_runs(
             run_config["schedule"] = schedule_tag(training["beta_schedule"])
 
         if training.get("beta_controller"):
-            from beta_vae_experiments.topology_annealing import controller_tag
+            if training["beta_controller"].get("mode") == "preservation":
+                from beta_vae_experiments.preservation_annealing import preservation_controller_tag as controller_tag
+            else:
+                from beta_vae_experiments.metrics.complementary.topology_annealing import controller_tag
             if training["anneal_function"] == "no-annealing" or loss != "kl" or loss_reduction != "mean":
-                raise ValueError("H0 controller requires KL, mean reduction and an enabled annealing adapter")
+                raise ValueError("Metric annealing requires KL, mean reduction and an enabled annealing adapter")
             run_config["controller"] = controller_tag(training["beta_controller"])
         if training.get("geometry_intervention"):
             raise ValueError("Neighborhood intervention is archived; use beta_schedule")
@@ -237,6 +242,7 @@ def build_varix_config(
         device=str(training["device"]), n_gpus=1, float_precision="32",
         compile_model=False, learning_rate=float(run["learning_rate"]),
         default_vae_loss=str(run["loss"]), beta=float(run["beta"]),
+        weight_decay=float(training.get("weight_decay", 0.01)),
     )
 
 
@@ -257,6 +263,7 @@ def run_varix_training(
     beta_schedule: dict[str, Any] | None = None,
     beta_controller: dict[str, Any] | None = None,
     run_folder: Path | None = None,
+    snapshot_test: bool = False,
 ) -> tuple[Any, Any]:
     """Train with the native AUTOENCODIX trainer and an optional beta schedule."""
     from autoencodix.utils._losses import VarixLoss
@@ -269,12 +276,20 @@ def run_varix_training(
         from beta_vae_experiments.beta_annealing import make_scheduled_loss
         loss_type = make_scheduled_loss(beta_schedule, config)
     if beta_controller:
-        from beta_vae_experiments.topology_annealing import make_h0_loss
+        if beta_controller.get("mode") == "preservation":
+            from beta_vae_experiments.preservation_annealing import make_preservation_loss as make_controller_loss
+        else:
+            from beta_vae_experiments.metrics.complementary.topology_annealing import make_h0_loss as make_controller_loss
         if run_folder is None or fixed_data_splits.valid is None:
-            raise ValueError("H0 controller requires a run folder and validation split")
-        loss_type = make_h0_loss(beta_controller, config, run_folder, len(fixed_data_splits.valid.sample_ids))
+            raise ValueError("Metric annealing requires a run folder and validation split")
+        loss_type = make_controller_loss(beta_controller, config, run_folder, len(fixed_data_splits.valid.sample_ids))
+    trainer_options = {}
+    if snapshot_test:
+        if run_folder is None:
+            raise ValueError("Test snapshots require a run folder")
+        trainer_options["trainer_type"] = make_snapshot_trainer(fixed_data_splits, run_folder)
     varix = acx.Varix(data=fixed_data_splits, config=config, loss_type=loss_type,
-                      evaluator=ClassAUCEvaluator)
+                      evaluator=ClassAUCEvaluator, **trainer_options)
     result = varix.run()
     return varix, result
 
@@ -527,7 +542,7 @@ def run_experiment(
     """Prepare shared data, run each configuration, and save its outputs and metrics."""
     settings = load_experiment_config(experiment_json)
     if fixed_beta_from_controller is not None:
-        from beta_vae_experiments.topology_annealing import apply_fixed_beta_baseline
+        from beta_vae_experiments.metrics.complementary.topology_annealing import apply_fixed_beta_baseline
         settings = apply_fixed_beta_baseline(settings, fixed_beta_from_controller)
     configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
                              snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)
@@ -536,6 +551,8 @@ def run_experiment(
     data_config, fixed_data_splits = prepare_experiment_data(settings, runs[0])
     output_dir = settings["output_dir"]
     save_split_manifest(fixed_data_splits, output_dir)
+    if settings.get("preprocessed_data_dir"):
+        save_preprocessed_splits(fixed_data_splits, settings["preprocessed_data_dir"])
     overview, finished, rerun = load_experiment_progress(settings)
     training = settings["training"]
     dataset_id = str(settings["dataset"]["id"])
@@ -556,6 +573,8 @@ def run_experiment(
             varix, result = run_varix_training(
                 fixed_data_splits, config, training.get("ladder"), training.get("beta_schedule"),
                 beta_controller=training.get("beta_controller"), run_folder=run_folder,
+                snapshot_test=training.get("snapshots", {}).get("enabled", False)
+                    and training.get("snapshots", {}).get("test", False),
             )
             splits = save_run_outputs(varix, result, config, settings, run_name, run_folder)
             snapshots = training.get("snapshots", {})
@@ -566,7 +585,7 @@ def run_experiment(
                     beta_schedule=training.get("beta_schedule"),
                 )
             if training.get("sigma_analysis", False):
-                from beta_vae_experiments.topology_annealing import analyze_sigma_run
+                from beta_vae_experiments.metrics.complementary.topology_annealing import analyze_sigma_run
                 analyze_sigma_run(varix, run_folder, dataset=str(settings["dataset"]["id"]))
             if settings["metrics"]["absolute_core"]["enabled"]:
                 row = analyse_varix_training(varix, result, run_name, run, settings, splits)
@@ -597,7 +616,7 @@ def preflight_experiment(
     """Validate one JSON configuration without preprocessing or training."""
     settings = load_experiment_config(experiment_json)
     if fixed_beta_from_controller is not None:
-        from beta_vae_experiments.topology_annealing import apply_fixed_beta_baseline
+        from beta_vae_experiments.metrics.complementary.topology_annealing import apply_fixed_beta_baseline
         settings = apply_fixed_beta_baseline(settings, fixed_beta_from_controller)
     configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
                              snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)

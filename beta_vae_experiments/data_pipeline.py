@@ -289,11 +289,15 @@ def save_epoch_snapshots(varix, run_folder, every=50, downstream=True, beta_sche
             continue
         posteriors, labels = {}, {}
         for split in ("train", "valid"):
+            path = folder / f"epoch_{epoch+1:05d}_{split}.npz"
             arrays = {}
+            if path.exists():
+                with np.load(path) as saved:
+                    arrays = {key: saved[key] for key in saved.files}
             for key, name in (("mu", "mus"), ("logvar", "sigmas"), ("z", "latentspaces"),
                               ("sample_ids", "sample_ids")):
                 value = to_numpy(getattr(result, name).get(epoch=epoch, split=split))
-                if value is not None and value.size:
+                if key not in arrays and value is not None and value.size:
                     arrays[key] = value.astype(str) if key == "sample_ids" else value
             if "z" not in arrays:
                 continue
@@ -308,6 +312,12 @@ def save_epoch_snapshots(varix, run_folder, every=50, downstream=True, beta_sche
                 label_path = folder / f"labels_{split}.parquet"
                 if not label_path.exists():
                     labels[split].to_parquet(label_path)
+        test_path = folder / f"epoch_{epoch+1:05d}_test.npz"
+        if test_path.exists():
+            with np.load(test_path) as saved:
+                test_ids = saved["sample_ids"]
+            metadata.loc[test_ids].to_parquet(folder / "labels_test.parquet")
+            records.append(dict(epoch=epoch+1, split="test", file=test_path.name, status="ok", missing=""))
         if downstream:
             if set(posteriors) != {"train", "valid"}:
                 print(f"Snapshot epoch {epoch+1}: native posterior arrays missing; downstream unavailable")
@@ -329,8 +339,88 @@ def save_epoch_snapshots(varix, run_folder, every=50, downstream=True, beta_sche
     pd.DataFrame(records, columns=["epoch", "split", "file", "status", "missing"]).to_csv(
         folder / "snapshot_index.csv", index=False)
     (folder / "provenance.json").write_text(json.dumps(dict(
-        source="autoencodix_training_dynamics", every=every,
-        train="captured during batch updates", valid="captured during validation",
-        exported_after_training=True, splits=["train", "valid"],
+        source="checkpoint_inference" if (folder / "labels_test.parquet").exists() else "autoencodix_training_dynamics", every=every,
+        train="checkpoint eval inference" if (folder / "labels_test.parquet").exists() else "captured during batch updates",
+        valid="checkpoint eval inference" if (folder / "labels_test.parquet").exists() else "captured during validation",
+        exported_after_training=True,
+        splits=["train", "valid", "test"] if (folder / "labels_test.parquet").exists() else ["train", "valid"],
     ), indent=2) + "\n")
     return folder
+
+
+def save_preprocessed_splits(splits, output_dir):
+    """Persist exact model inputs, feature IDs and labels once per dataset/split."""
+    import fcntl
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / ".export.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for split in ("train", "valid", "test"):
+            dataset = getattr(splits, split)
+            if dataset is None:
+                continue
+            arrays = dict(x=to_numpy(dataset.data),
+                          sample_ids=np.asarray(dataset.sample_ids, dtype=str),
+                          feature_ids=np.asarray(dataset.feature_ids, dtype=str))
+            path = directory / f"input_{split}.npz"
+            if path.exists():
+                with np.load(path) as saved:
+                    if any(not np.array_equal(saved[key], value) for key, value in arrays.items()):
+                        raise ValueError(f"Preprocessed data differ from saved export: {path}")
+            else:
+                temporary = path.with_suffix(".tmp.npz")
+                np.savez_compressed(temporary, **arrays)
+                temporary.replace(path)
+            metadata = getattr(dataset, "metadata", None)
+            if isinstance(metadata, dict):
+                metadata = metadata.get("paired")
+            if isinstance(metadata, pd.DataFrame):
+                metadata = metadata.copy()
+                metadata.index = metadata.index.astype(str)
+                metadata.loc[arrays["sample_ids"]].to_parquet(directory / f"labels_{split}.parquet")
+
+
+def make_snapshot_trainer(splits, run_folder):
+    """Export same-checkpoint posteriors without altering the native training steps.
+
+    AUTOENCODIX records no historical test inference, and state_dict checkpoints
+    are not deep-copied. Encode at the checkpoint itself rather than reconstruct
+    historical test arrays from final weights. No labels or test scores are used.
+    """
+    from autoencodix.trainers._general_trainer import GeneralTrainer
+
+    class PosteriorSnapshotTrainer(GeneralTrainer):
+        def _store_checkpoint(self, epoch):
+            super()._store_checkpoint(epoch)
+            folder = Path(run_folder) / "epoch_snapshots"
+            folder.mkdir(parents=True, exist_ok=True)
+            model = self.get_model()
+            parameter = next(model.parameters())
+            was_training = model.training
+            devices = [parameter.device.index] if parameter.is_cuda else []
+            try:
+                model.eval()
+                with torch.random.fork_rng(devices=devices), torch.inference_mode(), self._fabric.autocast():
+                    for split_index, split in enumerate(("train", "valid", "test")):
+                        dataset = getattr(splits, split)
+                        if dataset is None:
+                            continue
+                        x = to_numpy(dataset.data)
+                        batches = []
+                        for start in range(0, len(x), self._config.batch_size):
+                            batch = torch.as_tensor(x[start:start+self._config.batch_size],
+                                                    device=parameter.device, dtype=parameter.dtype)
+                            batches.append(tuple(to_numpy(value) for value in model.encode(batch)))
+                        mu, logvar = (np.concatenate(parts) for parts in zip(*batches))
+                        if not (np.isfinite(mu).all() and np.isfinite(logvar).all()):
+                            raise ValueError(f"Nonfinite snapshot posterior: {split}, epoch {epoch+1}")
+                        rng = np.random.default_rng(np.random.SeedSequence([31, epoch, split_index]))
+                        z = mu + np.exp(.5 * logvar) * rng.standard_normal(mu.shape)
+                        path = folder / f"epoch_{epoch+1:05d}_{split}.npz"
+                        temporary = path.with_suffix(".tmp.npz")
+                        np.savez_compressed(temporary, mu=mu, logvar=logvar, z=z,
+                                            sample_ids=np.asarray(dataset.sample_ids, dtype=str))
+                        temporary.replace(path)
+            finally:
+                model.train(was_training)
+    return PosteriorSnapshotTrainer
