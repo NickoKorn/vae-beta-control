@@ -159,3 +159,6 @@ coverage.xml
 # Forman curvature used by the graph metric pipeline.
 !/beta_vae_experiments/metrics/graph/
 !/beta_vae_experiments/metrics/graph/graph_curvature_metrics.py
+
+# Exploratory ANOVA of the historical full-metric sweep.
+!/beta_vae_experiments/anova_26_09.ipynb
