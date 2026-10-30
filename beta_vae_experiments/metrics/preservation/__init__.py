@@ -15,6 +15,7 @@ from pathlib import Path
 from importlib.metadata import version
 from threading import Lock
 import hashlib
+import inspect
 import json
 
 from scipy.spatial.distance import pdist, squareform
@@ -24,6 +25,48 @@ import numpy as np
 import pandas as pd
 import zadu as _zadu
 from zadu import MEASURE, ZADU, make_spec
+from zadu.measures import (
+    local_continuity_meta_criteria, mean_relative_rank_error, neighbor_dissimilarity,
+    procrustes, topographic_product, trustworthiness_continuity,
+)
+
+
+_RANK_MEASURES = {
+    str(MEASURE.TNC): (trustworthiness_continuity, "ranking"),
+    str(MEASURE.MRRE): (mean_relative_rank_error, "ranking"),
+    str(MEASURE.LCMC): (local_continuity_meta_criteria, "knn"),
+    str(MEASURE.ND): (neighbor_dissimilarity, "knn"),
+    str(MEASURE.PROC): (procrustes, "knn"),
+    str(MEASURE.TOPO): (topographic_product, "knn"),
+}
+
+
+def _self_first_neighbours(values: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare ZADU neighbor/rank inputs: self=0, remaining ties by row index.
+
+    Lee & Verleysen (2009), Section 2, p.1432, define distinct index-resolved
+    ranks and explicitly set reflexive ranks to zero (text preceding Eq. 2):
+    https://perso.uclouvain.be/michel.verleysen/papers/neurocomputing09jl.pdf
+    Distances are float64; stable sorting implements the index convention.
+    Tie order is not geometric information and depends on supplied row order.
+    """
+    distances = squareform(pdist(np.asarray(values, dtype=np.float64)))
+    np.fill_diagonal(distances, -1.)
+    order = np.argsort(distances, axis=1, kind="stable")
+    return order[:, 1:k+1], np.argsort(order, axis=1, kind="stable")
+
+
+def _run_rank_measure(measure_id, x, embedding, k, neighbours):
+    """Use official ZADU formulas through its precomputed-neighbor arguments."""
+    module, kind = _RANK_MEASURES[measure_id]
+    (x_nn, x_rank), (mu_nn, mu_rank) = neighbours["x"], neighbours["mu"]
+    options = (dict(knn_ranking_info=(x_nn, x_rank, mu_nn, mu_rank))
+               if kind == "ranking" else dict(knn_info=(x_nn, mu_nn)))
+    if "return_local" in inspect.signature(module.measure).parameters:
+        options["return_local"] = True
+    output = module.measure(x, embedding, k=k, **options)
+    global_result, local_result = output if isinstance(output, tuple) else (output, None)
+    return dict(global_result), None if local_result is None else dict(local_result)
 
 
 from typing import TYPE_CHECKING
@@ -291,23 +334,29 @@ def compute_zadu_geometry(
             float32_finite=bool(np.isfinite(float32).all()),
             diameter=float(np.max(distances)))
     if any(f["distance_tie_rows"] for f in space_facts.values()):
-        warnings.append("Equal-distance ranks present; official backend tie conventions apply; no jitter.")
+        warnings.append("Equal-distance ranks present; see recorded rank backend and tie policy; no jitter.")
     collapsed = any(f["diameter"] == 0 for f in space_facts.values())
     duplicate_neighbors = any(f["float32_unique_rows"] != n_samples for f in space_facts.values())
     invalid32 = any(not f["float32_finite"] for f in space_facts.values())
     invalid_distances = any(not np.isfinite(f["diameter"]) for f in space_facts.values())
+    neighbours = None
+    if duplicate_neighbors and not (collapsed or invalid_distances or invalid32):
+        neighbours = dict(x=_self_first_neighbours(x, k), mu=_self_first_neighbours(embedding, k))
+        warnings.append("Duplicate/float32-colliding rows: rank measures use self-first Float64 "
+                        "neighbors via ZADU knn_info/knn_ranking_info; ties ordered by row index. "
+                        "Tie order is a convention, not recovered geometric information.")
     for index, specification in enumerate(specifications):
         if core_only and index not in (0, 7, 11):
             continue
-        # Upstream neighbor helpers discard the first result, assuming it is
-        # self. Duplicate coordinates invalidate this assumption. Retain all
-        # rows but withhold affected scores instead of reporting arbitrary ranks.
+        measure_id = str(specification["id"])
         neighbor_measure = "k" in specification["params"]
         reason = None
         if collapsed or invalid_distances:
             reason = "A reference or embedding has zero/nonfinite diameter; preservation is undefined."
-        elif neighbor_measure and (duplicate_neighbors or invalid32):
-            reason = "Duplicate/float32-colliding rows make ZADU self-neighbor exclusion ambiguous."
+        elif invalid32 and neighbor_measure:
+            reason = "Nonfinite Float32 coordinates; native ZADU neighbor search is undefined."
+        elif duplicate_neighbors and neighbor_measure and measure_id not in _RANK_MEASURES:
+            reason = "Duplicate/float32-colliding rows: this measure has no precomputed-neighbor interface."
         if reason:
             failures.append(dict(measure=str(specification["id"]), params=specification["params"],
                 stage="input_guard", exception_type="DegenerateGeometry", message=reason))
@@ -316,7 +365,9 @@ def compute_zadu_geometry(
         try:
             # ZADU SNC uses NumPy's global RNG. The seed is orchestration,
             # not a replacement or modification of the official measure.
-            if str(specification["id"]) == str(MEASURE.SNC):
+            if neighbours is not None and measure_id in _RANK_MEASURES:
+                global_result, local_result = _run_rank_measure(measure_id, x, embedding, k, neighbours)
+            elif measure_id == str(MEASURE.SNC):
                 # Serialize our adapter calls; preserve the caller's RNG state.
                 with _ZADU_RNG_LOCK:
                     caller_state = np.random.get_state()
@@ -399,7 +450,10 @@ def compute_zadu_geometry(
         snc_seed=random_state, snc_k_is_ignored_by_backend=True,
         specifications=specifications, distance_metric="euclidean", geodesic=False,
         n_samples=n_samples, spaces=space_facts,
-        duplicate_policy="keep rows; suppress ambiguous neighbor scores; no jitter",
+        duplicate_policy="keep rows; self-first/index-resolved ranks via ZADU interfaces; SNC withheld; no jitter",
+        rank_backend="precomputed_float64" if neighbours is not None else "native_zadu",
+        rank_tie_policy="self rank zero; remaining exact ties by supplied row index" if neighbours is not None else "native backend",
+        rank_adapted_measures=sorted(_RANK_MEASURES) if neighbours is not None else [],
         kernel_density=dict(formula="sum_j exp(-(D_ij/max(D))**2/sigma), then normalize weights",
             separate_diameter_normalization=True, includes_self=True,
             dtm_convention="L1 difference of kernel-density weights; not classical DTM"),

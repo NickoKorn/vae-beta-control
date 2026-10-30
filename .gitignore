@@ -162,3 +162,7 @@ coverage.xml
 
 # Exploratory ANOVA of the historical full-metric sweep.
 !/beta_vae_experiments/anova_26_09.ipynb
+
+!/beta_vae_experiments/large_scale_analysis.py
+
+!/beta_vae_experiments/large_scale_analysis.ipynb

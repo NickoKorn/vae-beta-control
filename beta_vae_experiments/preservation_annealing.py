@@ -146,10 +146,31 @@ def seek_preservation_target(stage, score, target, config):
                    reason=reason, last_direction=direction, search_step=step)
 
 
+def _self_first_neighbours(values, k):
+    """Neighbour lists and rankings in which every point is its own rank 0.
+
+    ZADU drops the first sorted column as "self". With exact duplicates (Varix
+    sets mu < 1e-7 to 0, so many patients share the origin) another identical
+    point can come first: self stays in the list and a true neighbour is lost.
+    Here the diagonal is pushed below all distances, as sklearn excludes self by
+    index. Remaining ties are ordered by sample index (stable sort); that order
+    is a convention, not information.
+    """
+    from zadu.measures.utils.pairwise_dist import pairwise_distance_matrix
+    distances = np.array(pairwise_distance_matrix(values, 'euclidean'), dtype=np.float64)
+    np.fill_diagonal(distances, -1.)
+    order = np.argsort(distances, axis=1, kind='stable')
+    return order[:, 1:k+1], np.argsort(order, axis=1, kind='stable')
+
+
 def measure_preservation(x, mu, config):
     """Official sklearn trustworthiness or a selected ZADU score; no custom formula.
 
     sklearn excludes self by index, including for tied/duplicate embeddings.
+    ZADU MRRE and LCMC receive self-first neighbour lists through their official
+    knn_ranking_info / knn_info arguments, so duplicate mu (patients at the Varix
+    zero clamp) no longer bias them; the formulas stay ZADU's. Without this,
+    duplicates made ZADU MRRE false optimistic by up to 0.06 after collapse.
     Distance ties still make the neighbor ordering convention-dependent.
     Constant embeddings are withheld. ZADU SNC keeps the existing stricter
     float32-duplicate guard and uses floor(sqrt(n)), not the supplied k.
@@ -164,22 +185,29 @@ def measure_preservation(x, mu, config):
     if config.metric == 'trustworthiness':
         from sklearn.manifold import trustworthiness
         return float(trustworthiness(x, mu, n_neighbors=config.k))
-    from zadu import MEASURE, make_spec
-    from .metrics.preservation import _run_zadu_measure, _ZADU_RNG_LOCK
-    for values in (x,mu):
-        if not np.isfinite(values).all() or len(np.unique(values.astype(np.float32),axis=0)) != len(values):
-            raise ValueError('Nonfinite or duplicate float32 coordinates: ZADU signal unavailable')
-    if config.metric == 'cohesiveness':
-        spec = make_spec(MEASURE.SNC,k=config.k,iteration=150,walk_num_ratio=.3,alpha=.1,clustering_strategy='dbscan')
+    if config.metric in ('mrre_false', 'lcmc'):
+        from zadu.measures import local_continuity_meta_criteria, mean_relative_rank_error
+        x_neighbours, x_ranking = _self_first_neighbours(x, config.k)
+        mu_neighbours, mu_ranking = _self_first_neighbours(mu, config.k)
+        if config.metric == 'mrre_false':
+            result = mean_relative_rank_error.measure(
+                x, mu, k=config.k, knn_ranking_info=(x_neighbours, x_ranking, mu_neighbours, mu_ranking))
+        else:
+            result = local_continuity_meta_criteria.measure(x, mu, k=config.k, knn_info=(x_neighbours, mu_neighbours))
     else:
-        spec = make_spec(MEASURE.MRRE if config.metric == 'mrre_false' else MEASURE.LCMC,k=config.k)
-    with _ZADU_RNG_LOCK:
-        previous = np.random.get_state()
-        try:
-            np.random.seed(config.seed)
-            result,_ = _run_zadu_measure(spec,x,mu)
-        finally:
-            np.random.set_state(previous)
+        from zadu import MEASURE, make_spec
+        from .metrics.preservation import _run_zadu_measure, _ZADU_RNG_LOCK
+        for values in (x,mu):
+            if len(np.unique(values.astype(np.float32),axis=0)) != len(values):
+                raise ValueError('Duplicate float32 coordinates: ZADU cohesiveness unavailable')
+        spec = make_spec(MEASURE.SNC,k=config.k,iteration=150,walk_num_ratio=.3,alpha=.1,clustering_strategy='dbscan')
+        with _ZADU_RNG_LOCK:
+            previous = np.random.get_state()
+            try:
+                np.random.seed(config.seed)
+                result,_ = _run_zadu_measure(spec,x,mu)
+            finally:
+                np.random.set_state(previous)
     score = float(result[config.metric])
     lower = -config.k/(len(x)-1) if config.metric == 'lcmc' else 0.
     if not np.isfinite(score) or not lower-1e-12 <= score <= 1+1e-12:
