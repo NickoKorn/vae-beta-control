@@ -166,3 +166,10 @@ coverage.xml
 !/beta_vae_experiments/large_scale_analysis.py
 
 !/beta_vae_experiments/large_scale_analysis.ipynb
+
+# Current annealing, overlap and live-analysis entry points.
+!/beta_vae_experiments/cluster_overlap.py
+!/beta_vae_experiments/live_dashboard.py
+!/beta_vae_experiments/trustworthiness_09.ipynb
+!/beta_vae_experiments/rate_metric_correlation.ipynb
+!/beta_vae_experiments/trustworthiness_annealer.ipynb
