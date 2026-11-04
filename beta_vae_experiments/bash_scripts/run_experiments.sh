@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Validate and run JSON experiment suites, including fixed-beta and annealing runs.
 set -Eeuo pipefail
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${REPO}/.venv/bin/python"

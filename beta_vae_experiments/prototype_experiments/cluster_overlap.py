@@ -22,7 +22,7 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from zadu.measures import clustering_and_external_validation_measure, internal_validation_measure, neighborhood_hit
 
-from beta_vae_experiments.preservation_annealing import _self_first_neighbours
+from beta_vae_experiments.prototype_experiments.preservation_annealing import _self_first_neighbours
 
 CANDIDATE_CLUSTERS = tuple(range(2, 21))
 

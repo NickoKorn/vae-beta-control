@@ -1,0 +1,11 @@
+# Optional OFFLINE analysis environment; do not install into requirements.txt's NumPy-2 training environment.
+# python3.11 -m venv .venv-density
+# .venv-density/bin/python -m pip install -r beta_vae_experiments/requirements-density.txt
+numpy==1.26.4
+scikit-learn==1.6.1
+pandas==2.3.3
+hdbscan==0.8.44
+dadapy==0.3.4
+# Resolve the JAX dependencies required by DADApy's release without long backtracking.
+optax==0.2.5
+orbax-checkpoint==0.6.4

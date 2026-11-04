@@ -149,10 +149,12 @@ def build_training_runs(
     training: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Build the training grid and discard duplicate generated run names."""
-    if training.get("beta_controller") and training.get("beta_schedule"):
-        raise ValueError("beta_controller and beta_schedule are mutually exclusive")
+    if training.get("beta_controller"):
+        raise ValueError("beta_controller is disconnected; remove it from the training configuration.")
+    if training.get("beta_schedule"):
+        raise ValueError("Custom beta_schedule is disconnected; use native anneal_function instead.")
     if training.get("require_controller_endpoint", False):
-        raise ValueError("This fixed-endpoint profile requires --fixed-beta-from-controller")
+        raise ValueError("Automatic controller endpoints are no longer supported; set beta explicitly and remove require_controller_endpoint.")
     runs_by_name: dict[str, dict[str, Any]] = {}
     normalized_beta = "beta_over_d" in training
     if ("betas" in training) == normalized_beta:
@@ -187,26 +189,10 @@ def build_training_runs(
             "loss_reduction": str(loss_reduction),
         })
         if training.get("ladder", {}).get("enabled", False):
-            raise ValueError("The retired dimension-ladder backend is unavailable; use standard beta or beta_schedule")
-        if training.get("beta_schedule"):
-            from beta_vae_experiments.beta_annealing import schedule_from_settings, schedule_tag
-            if not normalized_beta or training["anneal_function"] == "no-annealing":
-                raise ValueError("beta_schedule requires beta_over_d and an enabled native annealing adapter")
-            schedule = schedule_from_settings(training["beta_schedule"], beta / latent_dim)
-            if int(training["epochs"]) != schedule.epochs:
-                raise ValueError("training.epochs differs from beta_schedule duration")
-            run_config["schedule"] = schedule_tag(training["beta_schedule"])
+            raise ValueError("The retired dimension-ladder backend is unavailable; use standard beta")
 
-        if training.get("beta_controller"):
-            if training["beta_controller"].get("mode") == "preservation":
-                from beta_vae_experiments.preservation_annealing import preservation_controller_tag as controller_tag
-            else:
-                from beta_vae_experiments.metrics.complementary.topology_annealing import controller_tag
-            if training["anneal_function"] == "no-annealing" or loss != "kl" or loss_reduction != "mean":
-                raise ValueError("Metric annealing requires KL, mean reduction and an enabled annealing adapter")
-            run_config["controller"] = controller_tag(training["beta_controller"])
         if training.get("geometry_intervention"):
-            raise ValueError("Neighborhood intervention is archived; use beta_schedule")
+            raise ValueError("Neighborhood intervention is archived")
         run_name = _run_name(experiment_name, run_config)
         runs_by_name.setdefault(run_name, run_config)
 
@@ -225,7 +211,9 @@ def build_varix_config(
     is_synthetic = is_synthetic_dataset(dataset_id)
     return VarixConfig(
         data_config=data_config,
-        annotation_columns=([] if is_synthetic else list(training.get("downstream_targets", TARGETS))),
+        annotation_columns=(list(training.get("downstream_targets", ["ACTIVITY"]))
+                            if dataset_id == "gudhi_activities" else
+                            [] if is_synthetic else list(training.get("downstream_targets", TARGETS))),
         data_case=DataCase.MULTI_BULK,
         epochs=int(training["epochs"]),
         checkpoint_interval=int(
@@ -260,29 +248,14 @@ def prepare_fixed_data_splits(
 def run_varix_training(
     fixed_data_splits: DatasetContainer, config: VarixConfig,
     ladder: dict[str, Any] | None = None,
-    beta_schedule: dict[str, Any] | None = None,
-    beta_controller: dict[str, Any] | None = None,
     run_folder: Path | None = None,
     snapshot_test: bool = False,
 ) -> tuple[Any, Any]:
-    """Train with the native AUTOENCODIX trainer and an optional beta schedule."""
+    """Train with the native AUTOENCODIX trainer and loss."""
     from autoencodix.utils._losses import VarixLoss
     loss_type = VarixLoss
     if ladder and ladder.get("enabled", False):
         raise ValueError("The retired dimension-ladder backend is unavailable")
-    if beta_schedule and beta_controller:
-        raise ValueError("beta_controller and beta_schedule are mutually exclusive")
-    if beta_schedule:
-        from beta_vae_experiments.beta_annealing import make_scheduled_loss
-        loss_type = make_scheduled_loss(beta_schedule, config)
-    if beta_controller:
-        if beta_controller.get("mode") == "preservation":
-            from beta_vae_experiments.preservation_annealing import make_preservation_loss as make_controller_loss
-        else:
-            from beta_vae_experiments.metrics.complementary.topology_annealing import make_h0_loss as make_controller_loss
-        if run_folder is None or fixed_data_splits.valid is None:
-            raise ValueError("Metric annealing requires a run folder and validation split")
-        loss_type = make_controller_loss(beta_controller, config, run_folder, len(fixed_data_splits.valid.sample_ids))
     trainer_options = {}
     if snapshot_test:
         if run_folder is None:
@@ -441,20 +414,6 @@ def load_experiment_progress(
     return overview, finished, rerun
 
 
-def save_run_beta_schedule(
-    training: dict[str, Any], config: VarixConfig, run_folder: Path,
-) -> None:
-    """Save the effective beta schedule when the run uses a custom schedule."""
-    if training.get("beta_schedule"):
-        from beta_vae_experiments.beta_annealing import schedule_from_settings
-        schedule = schedule_from_settings(training["beta_schedule"], config.beta / config.latent_dim)
-        pd.DataFrame({
-            "epoch": np.arange(schedule.epochs) + 1,
-            "beta_over_d": schedule.factors() * config.beta / config.latent_dim,
-            "beta_config": schedule.factors() * config.beta,
-        }).to_csv(run_folder / "beta_schedule.csv", index=False)
-
-
 def save_run_loss_history(result: Any, run_folder: Path) -> None:
     """Export native epoch losses and sub-losses in one table."""
     history = {}
@@ -472,11 +431,10 @@ def save_run_loss_history(result: Any, run_folder: Path) -> None:
 
 
 def save_run_outputs(
-    varix: Any, result: Any, config: VarixConfig, settings: dict[str, Any],
+    varix: Any, result: Any, settings: dict[str, Any],
     run_name: str, run_folder: Path,
 ) -> dict[str, dict[str, Any]]:
-    """Save the beta schedule, losses, final model and posterior arrays in order."""
-    save_run_beta_schedule(settings["training"], config, run_folder)
+    """Save losses, the final model and posterior arrays in order."""
     save_run_loss_history(result, run_folder)
     torch.save(
         {key: value.detach().cpu().clone()
@@ -537,13 +495,9 @@ def create_failed_run_record(
 def run_experiment(
     experiment_json: Path, *, snapshot_enabled: bool | None = None,
     snapshot_every: int | None = None, snapshot_downstream: bool | None = None,
-    fixed_beta_from_controller: Path | None = None,
 ) -> pd.DataFrame:
     """Prepare shared data, run each configuration, and save its outputs and metrics."""
     settings = load_experiment_config(experiment_json)
-    if fixed_beta_from_controller is not None:
-        from beta_vae_experiments.metrics.complementary.topology_annealing import apply_fixed_beta_baseline
-        settings = apply_fixed_beta_baseline(settings, fixed_beta_from_controller)
     configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
                              snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)
     validate_experiment_settings(settings)
@@ -571,18 +525,17 @@ def run_experiment(
             run_folder = output_dir / "run_analysis" / run_name
             run_folder.mkdir(parents=True, exist_ok=True)
             varix, result = run_varix_training(
-                fixed_data_splits, config, training.get("ladder"), training.get("beta_schedule"),
-                beta_controller=training.get("beta_controller"), run_folder=run_folder,
+                fixed_data_splits, config, training.get("ladder"),
+                run_folder=run_folder,
                 snapshot_test=training.get("snapshots", {}).get("enabled", False)
                     and training.get("snapshots", {}).get("test", False),
             )
-            splits = save_run_outputs(varix, result, config, settings, run_name, run_folder)
+            splits = save_run_outputs(varix, result, settings, run_name, run_folder)
             snapshots = training.get("snapshots", {})
             if snapshots.get("enabled", False):
                 save_epoch_snapshots(
                     varix, run_folder, every=snapshots.get("every", 50),
                     downstream=snapshots.get("downstream", True),
-                    beta_schedule=training.get("beta_schedule"),
                 )
             if training.get("sigma_analysis", False):
                 from beta_vae_experiments.metrics.complementary.topology_annealing import analyze_sigma_run
@@ -611,13 +564,9 @@ def run_experiment(
 def preflight_experiment(
     experiment_json: Path, *, snapshot_enabled: bool | None = None,
     snapshot_every: int | None = None, snapshot_downstream: bool | None = None,
-    fixed_beta_from_controller: Path | None = None,
 ) -> None:
     """Validate one JSON configuration without preprocessing or training."""
     settings = load_experiment_config(experiment_json)
-    if fixed_beta_from_controller is not None:
-        from beta_vae_experiments.metrics.complementary.topology_annealing import apply_fixed_beta_baseline
-        settings = apply_fixed_beta_baseline(settings, fixed_beta_from_controller)
     configure_epoch_snapshots(settings, snapshot_enabled=snapshot_enabled,
                              snapshot_every=snapshot_every, snapshot_downstream=snapshot_downstream)
     dataset = settings["dataset"]
@@ -631,9 +580,6 @@ def preflight_experiment(
     data_config = build_data_config(PROJECT_ROOT, str(dataset["id"]), dataset.get("options"))
     config = build_varix_config(data_config, str(dataset["id"]), settings["training"],
                                 runs[0], global_seed=runs[0]["seed"])
-    if settings["training"].get("beta_schedule"):
-        from beta_vae_experiments.beta_annealing import make_scheduled_loss
-        make_scheduled_loss(settings["training"]["beta_schedule"], config)
     print(
         f"Preflight passed: {settings['experiment_name']} "
         f"({dataset['id']}, {len(runs)} runs)"
@@ -667,14 +613,10 @@ def main() -> None:
         "--snapshot-downstream", action=argparse.BooleanOptionalAction, default=None,
         help="Evaluate exported Train/Validation snapshots after training; overrides JSON.",
     )
-    parser.add_argument("--fixed-beta-from-controller", type=Path,
-                        help="Use completed controller log endpoint, paired seed and latent dimension.")
     arguments = parser.parse_args()
     snapshot_options = dict(snapshot_enabled=arguments.epoch_snapshots,
                             snapshot_every=arguments.snapshot_every,
                             snapshot_downstream=arguments.snapshot_downstream)
-    if arguments.fixed_beta_from_controller is not None:
-        snapshot_options["fixed_beta_from_controller"] = arguments.fixed_beta_from_controller
     if arguments.preflight:
         preflight_experiment(arguments.experiment_json, **snapshot_options)
     else:

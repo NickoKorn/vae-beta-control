@@ -1,12 +1,16 @@
-"""Metric implementations; the core runner selects only approved families.
+"""Metric implementations with lazy exports for optional analysis modules."""
 
-Core orchestration lives in metric_pipeline; no separate scope registry.
-"""
+__all__ = ["TopologyMetricConfig", "GraphMetricConfig"]
 
-from .topology import TopologyMetricConfig
-from beta_vae_experiments.metrics.graph.graph_metrics_pipeline import GraphMetricConfig
 
-__all__ = [
-    "TopologyMetricConfig",
-    "GraphMetricConfig",
-]
+def __getattr__(name):
+    if name == "TopologyMetricConfig":
+        from .topology import TopologyMetricConfig
+        value = TopologyMetricConfig
+    elif name == "GraphMetricConfig":
+        from .graph.graph_metrics_pipeline import GraphMetricConfig
+        value = GraphMetricConfig
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value

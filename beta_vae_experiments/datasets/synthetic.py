@@ -261,7 +261,8 @@ SYNTHETIC_DATASET_GENERATORS: dict[
 
 def is_synthetic_dataset(dataset_id: str) -> bool:
     """Return whether a JSON dataset ID has a registered synthetic generator."""
-    return dataset_id in SYNTHETIC_DATASET_GENERATORS
+    from .gudhi_data import GUDHI_DATASET_IDS
+    return dataset_id in SYNTHETIC_DATASET_GENERATORS or dataset_id in GUDHI_DATASET_IDS
 
 
 def generate_synthetic_dataset(
@@ -269,6 +270,9 @@ def generate_synthetic_dataset(
     config: Mapping[str, Any] | None = None,
 ) -> SyntheticManifoldDataset:
     """Dispatch a JSON dataset ID to its registered generator function."""
+    from .gudhi_data import GUDHI_DATASET_IDS, load_gudhi_dataset
+    if dataset_id in GUDHI_DATASET_IDS:
+        return load_gudhi_dataset(dataset_id, config)
     try:
         generator = SYNTHETIC_DATASET_GENERATORS[dataset_id]
     except KeyError as error:

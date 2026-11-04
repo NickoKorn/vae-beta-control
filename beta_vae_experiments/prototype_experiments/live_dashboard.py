@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from IPython.display import Markdown, display
 
-from beta_vae_experiments.cluster_overlap import ClusterReference, describe, scalar_summary
+from beta_vae_experiments.prototype_experiments.cluster_overlap import ClusterReference, describe, scalar_summary
 from beta_vae_experiments.metrics.information_theoretic import compute_conditional_kl_matrix
 from beta_vae_experiments.metrics.latent_usage import PosteriorCollapseConfig
 

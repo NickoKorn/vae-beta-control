@@ -1404,7 +1404,7 @@
   },
   "archive": "presets_archive.json",
   "resources": {
-    "tcga_download_manifest": "../datasets/manifests/tcga_pancancer_source.json",
-    "historical_tcga_split": "../datasets/manifests/tcga_split.json"
+    "tcga_download_manifest": "../datasets/tcga_pancancer_source.json",
+    "historical_tcga_split": "../metrics/complementary/datasets/tcga_split.json"
   }
 }

@@ -196,7 +196,7 @@ def measure_preservation(x, mu, config):
             result = local_continuity_meta_criteria.measure(x, mu, k=config.k, knn_info=(x_neighbours, mu_neighbours))
     else:
         from zadu import MEASURE, make_spec
-        from .metrics.preservation import _run_zadu_measure, _ZADU_RNG_LOCK
+        from beta_vae_experiments.metrics.preservation import _run_zadu_measure, _ZADU_RNG_LOCK
         for values in (x,mu):
             if len(np.unique(values.astype(np.float32),axis=0)) != len(values):
                 raise ValueError('Duplicate float32 coordinates: ZADU cohesiveness unavailable')

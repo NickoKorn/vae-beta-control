@@ -11,8 +11,10 @@ from .synthetic import (
     save_synthetic_ground_truth,
     synthetic_split_indices,
 )
+from .gudhi_data import load_gudhi_dataset
 
 __all__ = [
+    "load_gudhi_dataset",
     "SYNTHETIC_DATASET_GENERATORS",
     "SyntheticManifoldDataset",
     "generate_circle",

@@ -106,6 +106,9 @@ coverage.xml
 
 # Renamed topology module required by the existing imports.
 !/beta_vae_experiments/
+!/beta_vae_experiments/datasets/
+!/beta_vae_experiments/datasets/gudhi_data.py
+!/beta_vae_experiments/datasets/tcga_pancancer_source.json
 !/beta_vae_experiments/metrics/
 !/beta_vae_experiments/metrics/topology/
 !/beta_vae_experiments/metrics/topology/latent_descriptor.py
@@ -126,7 +129,7 @@ coverage.xml
 # Active single-annealer preparation and launch entry points.
 !/beta_vae_experiments/prepare_json_for_training.py
 !/beta_vae_experiments/bash_scripts/
-!/beta_vae_experiments/bash_scripts/run_annealing.sh
+!/beta_vae_experiments/bash_scripts/run_experiments.sh
 
 # Local complementary methods are excluded from the active repository.
 /beta_vae_experiments/metrics/complementary/
@@ -173,3 +176,38 @@ coverage.xml
 !/beta_vae_experiments/trustworthiness_09.ipynb
 !/beta_vae_experiments/rate_metric_correlation.ipynb
 !/beta_vae_experiments/trustworthiness_annealer.ipynb
+
+!/beta_vae_experiments/metrics/density_clustering.py
+
+!/beta_vae_experiments/requirements-density.txt
+
+# Reviewed experiment sources and executed prototype notebooks.
+!/beta_vae_experiments/prototype_experiments/
+!/beta_vae_experiments/prototype_experiments/collapse_dynamics.ipynb
+!/beta_vae_experiments/prototype_experiments/roadmap_latent_annealing.md
+!/beta_vae_experiments/prototype_experiments/trustworthiness_09.ipynb
+!/beta_vae_experiments/prototype_experiments/trustworthiness_annealer.ipynb
+!/beta_vae_experiments/prototype_experiments/gini_index.ipynb
+!/beta_vae_experiments/prototype_experiments/tda_annealing.ipynb
+!/beta_vae_experiments/prototype_experiments/preservation_annealing.py
+!/beta_vae_experiments/prototype_experiments/preservation_annealing_demo.ipynb
+!/beta_vae_experiments/prototype_experiments/beta_annealing.py
+!/beta_vae_experiments/prototype_experiments/live_dashboard.py
+!/beta_vae_experiments/prototype_experiments/cluster_overlap.py
+!/beta_vae_experiments/__init__.py
+!/beta_vae_experiments/references.bib
+!/beta_vae_experiments/requirements-graph.txt
+!/beta_vae_experiments/additional_downstream_tasks.ipynb
+!/beta_vae_experiments/analysis.ipynb
+!/beta_vae_experiments/metric_pipeline.py
+!/beta_vae_experiments/requirements.txt
+!/beta_vae_experiments/prepare_json_for_training.py
+!/beta_vae_experiments/data_pipeline.py
+!/beta_vae_experiments/new_beta_varix_experiments.py
+!/beta_vae_experiments/beta_vae_compression_merged_n#(1).odp
+!/beta_vae_experiments/tcga_data_analysis.py
+!/beta_vae_experiments/tcga_data_analysis.ipynb
+!/beta_vae_experiments/rate_metric_correlation.ipynb
+!/beta_vae_experiments/large_scale_analysis.py
+!/beta_vae_experiments/large_scale_analysis.ipynb
+!/beta_vae_experiments/requirements-density.txt
